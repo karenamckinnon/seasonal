@@ -123,8 +123,6 @@ def find_best_params(da_data, ds_ebm, savedir, dataname, m_opts=np.arange(0, 1.0
                               dims=['lat', 'lon'],
                               coords={'lat': da_data['lat'], 'lon': da_data['lon']})
 
-        ds_m.coords['mask'] = (('lat', 'lon'), ds_rho > 0.5)
-
         # combine all into one dataset
         ds_fit = xr.merge([da_T.to_dataset(name='T'),
                            lam.to_dataset(name='lam'),
