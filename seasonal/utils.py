@@ -71,8 +71,6 @@ def find_best_params(da_data, ds_ebm, savedir, dataname, m_opts=np.arange(0, 1.0
         ds_fit = xr.open_dataset(savename)
 
     else:
-        # standardize ordering of dimensions
-        da_data = da_data.transpose('month', 'lat', ' lon')
 
         nlat = len(da_data['lat'])
         nlon = len(da_data['lon'])
