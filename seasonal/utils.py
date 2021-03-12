@@ -135,3 +135,5 @@ def find_best_params(da_data, ds_ebm, savedir, dataname, m_opts=np.arange(0, 1.0
 
         # save
         ds_fit.to_netcdf(savename)
+
+    return ds_fit
