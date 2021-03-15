@@ -123,11 +123,16 @@ def find_best_params(da_data, ds_ebm, savedir, dataname, m_opts=np.arange(0, 1.0
                               dims=['lat', 'lon'],
                               coords={'lat': da_data['lat'], 'lon': da_data['lon']})
 
+        ds_Fc = xr.DataArray(F_c_save,
+                             dims=['lat', 'lon'],
+                             coords={'lat': da_data['lat'], 'lon': da_data['lon']})
+
         # combine all into one dataset
         ds_fit = xr.merge([da_T.to_dataset(name='T'),
                            lam.to_dataset(name='lam'),
                            ds_m.to_dataset(name='m'),
-                           ds_rho.to_dataset(name='rho')])
+                           ds_rho.to_dataset(name='rho2'),
+                           ds_Fc.to_dataset(name='Fc')])
 
         # save
         ds_fit.to_netcdf(savename)
