@@ -1,10 +1,10 @@
-epsilon = 0.8
-alpha = 0.3
-mwe = 4.2e6
-C_land = 2*mwe
-C_atm = 2*mwe
-C_ocean = 100*mwe
-C_ocean_deep = 3900*mwe
-kappa = 0
-sigma = 5.67e-8  # stefan boltzmann constant, W m^-2 K^-4
+# from CMIP5 mean estimates in Geoffroy et al 2013
+rho = 1030  # kg/m3
+cp = 4180  # J/kg/K
+mwe = rho*cp
+C_land = 1*mwe
+C_ocean = 54*mwe
+C_ocean_deep = 774*mwe
+gamma = 0.74
 seconds_per_day = 60*60*24
+days_per_year = 365.25
