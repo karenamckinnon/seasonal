@@ -328,3 +328,67 @@ def ramp_stabilize_solution(m, lam, dF=3.74, yrs_ramp=np.arange(1971, 2051), yrs
                             coords={'time': real_time, 'lambda': lam.flatten(), 'mixing': m.flatten()})
 
     return da_T_ebm
+
+
+def calc_amp_phase(da):
+    """Calculate the amplitude and phase of an annual-period sinusoid of monthly data
+
+    Parameters
+    ----------
+    da : xr.DataArray
+        DataArray containing the climatology of interest. The time variable should be "month"
+
+    Returns
+    -------
+    ds_1yr : xr.Dataset
+        Contains amplitude, phase, and variance explained (R2) for the annual-period sinusoid.
+    da_rec : xr.DataArray
+        Contains the reconsructed data with one annual-period sinusoid.
+
+    """
+
+    # Get time vector for monthly data
+    doy_da = xr.DataArray(np.arange(365), dims=['time'],
+                          coords={'time': pd.date_range(start='1950/01/01', freq='D', periods=365)})
+
+    t_basis = (doy_da.groupby('time.month').mean()/365).values
+
+    nt = len(t_basis)
+
+    # 1/yr sinusoid
+    basis = np.exp(2*np.pi*1j*t_basis)
+
+    # Project data onto basis
+    data = da.copy().values
+    mu = np.mean(data, axis=0)
+    data -= mu[np.newaxis, ...]
+
+    if len(da.shape) == 3:
+        coeff = 2/nt*(np.sum(basis[..., np.newaxis, np.newaxis]*da.transpose('month', ...).values,
+                             axis=0))
+    elif len(da.shape) == 2:  # only latitude
+        coeff = 2/nt*(np.sum(basis[..., np.newaxis]*da.transpose('month', ...).values, axis=0))
+
+    amp_1yr = np.abs(coeff)
+    phase_1yr = (np.angle(coeff))*365/(2*np.pi)
+
+    if len(da.shape) == 3:
+        rec = np.real(np.conj(coeff[np.newaxis, ...])*basis[..., np.newaxis, np.newaxis])
+    elif len(da.shape) == 2:  # only latitude
+        rec = np.real(np.conj(coeff[np.newaxis, ...])*basis[..., np.newaxis])
+
+    da_rec = da.copy(data=rec)
+    rho = xr.corr(da_rec, da, dim='month')
+
+    if len(da.shape) == 3:
+        ds_1yr = xr.Dataset(data_vars={'A': (('lat', 'lon'), amp_1yr),
+                                       'phi': (('lat', 'lon'), phase_1yr),
+                                       'R2': (('lat', 'lon'), rho**2)},
+                            coords={'lat': da.lat, 'lon': da.lon})
+    elif len(da.shape) == 2:  # only latitude
+        ds_1yr = xr.Dataset(data_vars={'A': (('lat'), amp_1yr),
+                                       'phi': (('lat'), phase_1yr),
+                                       'R2': (('lat'), rho**2)},
+                            coords={'lat': da.lat})
+
+    return ds_1yr, da_rec
