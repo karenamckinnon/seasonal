@@ -392,3 +392,9 @@ def calc_amp_phase(da):
                             coords={'lat': da.lat})
 
     return ds_1yr, da_rec
+
+
+def change_lon_180(da):
+    """Returns the xr.DataArray with longitude changed from 0, 360 to -180, 180"""
+    da = da.assign_coords({'lon': (((da.lon + 180) % 360) - 180)})
+    return da.sortby('lon')
