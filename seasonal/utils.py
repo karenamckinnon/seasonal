@@ -174,7 +174,6 @@ def seasonal_solution(m, lam):
     Y = A1*sin_phi1 + A2
 
     gain = (X**2 + Y**2)**(1/2)
-    gain *= 1e3  # per kW
     lag = 1/constants.omega*np.arctan(Y/X)
     lag /= constants.seconds_per_day  # in days
 
