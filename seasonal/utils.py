@@ -397,3 +397,41 @@ def change_lon_180(da):
     """Returns the xr.DataArray with longitude changed from 0, 360 to -180, 180"""
     da = da.assign_coords({'lon': (((da.lon + 180) % 360) - 180)})
     return da.sortby('lon')
+
+
+def calc_trend_season(da, trend_years, this_season):
+    """Calculate the trend in a dataarray over a given time period
+
+    Parameters
+    ----------
+    da : xr.DataArray
+        Contains data for trend calculation. Must have standard time dimension.
+    trend_years : tuple
+        (Start year, end year) for trend to be calculated over
+    this_season : str
+        Either 'ann' or 'MMM' (i.e. 'DJF') of traditional season.
+        Data will be average over the year, or for the season, before trend calculation.
+
+    Returns
+    -------
+    da_beta : xr.DataArray
+        The slope of the OLS trend in the data, in units of per year.
+
+    """
+    if this_season != 'ann':
+
+        da = da.resample(time='QS-DEC').mean()
+        da = da.sel({'time': da['time.season'] == this_season})
+
+    da = da.sel({'time': (da['time.year'] >= trend_years[0]) & (da['time.year'] <= trend_years[1])})
+
+    da = da.groupby('time.year').mean().load()
+
+    # Calculate linear trend
+    year_orig = da['year']
+    da['year'] = year_orig - year_orig.mean()
+    da_beta = da.to_dataset(name='data').polyfit(dim='year', deg=1)
+
+    da_beta = da_beta['data_polyfit_coefficients'].sel({'degree': 1})
+
+    return da_beta
