@@ -4,6 +4,20 @@ from climlab.solar.insolation import daily_insolation
 import os
 import xarray as xr
 import pandas as pd
+from glob import glob
+
+
+smile_dir = '/gpfs/fs1/collections/cdg/data/CLIVAR_LE'
+
+# Set interpolation lat/lon, and landmask
+lat1x1 = np.arange(-89.5, 90, 1)
+lon1x1 = np.arange(0.5, 360, 1)
+
+landfrac_name = 'sftlf'
+f_landfrac = sorted(glob('%s/%s/%s/%s/*.nc' % (smile_dir, 'cesm_lens', 'fx', landfrac_name)))
+da_landfrac = xr.open_dataset(f_landfrac[0])[landfrac_name]
+da_landfrac = da_landfrac.interp({'lat': lat1x1, 'lon': lon1x1})
+is_land = da_landfrac > 50
 
 
 def seasonal_ebm(t, Z, F_c, lat):
@@ -435,3 +449,212 @@ def calc_trend_season(da, trend_years, this_season):
     da_beta = da_beta['data_polyfit_coefficients'].sel({'degree': 1})
 
     return da_beta
+
+
+def calc_load_SMILE_trends(models, trend_years, seasonal_years, this_season, forcing, savedir):
+    """Calculate or load pre-calculated seasonal cycle and trend metrics from each SMILE.
+
+    Parameters
+    ----------
+    models : list
+        Names (matching paths) of each SMILE
+    trend_years : tuple
+        The start and end year of the trend to calculate
+    seasonal_years : tuple
+        The start and end year of the data to be used to calculate the seasonal cycle
+    this_season : str
+        Standard season e.g. 'DJF' or 'ann' (annual mean) over which averages are taken before calculating trend
+    forcing : str
+        Type of heating for seasonal cycle: 'ERA5_div', 'CERES_div', 'ERA5', 'CERES'
+        ERA5: SW at the surface, CERES: SW at TOA
+        div: to include heat flux divergence from ERA5 or not
+    savedir : str
+        Where to save the netcdfs with the seasonal cycle and trend
+
+    Returns
+    -------
+    da_gain : xr.DataArray
+        Gain of the seasonal cycle (based on member 1) for each SMILE
+    da_lag : xr.DataArray
+        Lag of the seasonal cycle (in days, based on member 1) for each SMILE
+    da_trend : xr.DataArray
+        Trend over the specified trend years in each SMILE
+
+    """
+
+    # monthly temperature
+    freq = 'Amon'
+    varname = 'tas'
+
+    # Collect all the amplitude, phases, and trends
+    da_amp = []
+    da_phase = []
+    da_trend = []
+
+    for m in models:
+        print(m)
+
+        amp_savename = '%s/%s_amplitude.nc' % (savedir, m)
+        phase_savename = '%s/%s_phase.nc' % (savedir, m)
+        R2_savename = '%s/%s_R2.nc' % (savedir, m)
+        trend_savename = '%s/%s_trend_%s_%i-%i.nc' % (savedir, m, this_season, trend_years[0], trend_years[-1])
+
+        files = sorted(glob('%s/%s/%s/%s/*historical_rcp85*nc' % (smile_dir, m, freq, varname)))
+
+        if (os.path.isfile(phase_savename) & os.path.isfile(trend_savename)):
+            this_amp = xr.open_dataarray(amp_savename)
+            this_phase = xr.open_dataarray(phase_savename)
+            this_R2 = xr.open_dataarray(R2_savename)
+            this_trend = xr.open_dataarray(trend_savename)
+        else:
+
+            this_amp = []
+            this_phase = []
+            this_R2 = []
+            this_trend = []
+
+            for counter, f in enumerate(files):
+                print(counter)
+
+                if m == 'ec_earth_lens':
+                    ds = xr.open_dataset(f, decode_times=False)
+                    new_time = pd.date_range(start='1860-01-01', periods=len(ds.time), freq='M')
+                    ds = ds.assign_coords({'time': new_time})
+                else:
+                    ds = xr.open_dataset(f)
+
+                da = ds[varname].load()
+
+                da = da.interp({'lat': lat1x1, 'lon': lon1x1})
+
+                da_seasonal = da.copy().sel({'time': (da['time.year'] >= seasonal_years[0]) &
+                                             (da['time.year'] <= seasonal_years[1])}).groupby('time.month').mean()
+
+                ds_1yr_T, _ = calc_amp_phase(da_seasonal)
+
+                this_amp.append(ds_1yr_T['A'])
+                this_phase.append(ds_1yr_T['phi'])
+                this_R2.append(ds_1yr_T['R2'])
+
+                this_trend.append(calc_trend_season(da.copy(), trend_years, this_season))
+
+            this_amp = xr.concat(this_amp, dim='member')
+            this_phase = xr.concat(this_phase, dim='member')
+            this_R2 = xr.concat(this_R2, dim='member')
+            this_trend = xr.concat(this_trend, dim='member')
+
+            this_amp.attrs = {'sc_years': seasonal_years}
+            this_phase.attrs = {'sc_years': seasonal_years}
+            this_phase.attrs = {'sc_years': seasonal_years}
+            this_trend.attrs = {'trend_years': trend_years}
+
+            this_amp.to_netcdf(amp_savename)
+            this_phase.to_netcdf(phase_savename)
+            this_R2.to_netcdf(R2_savename)
+            this_trend.to_netcdf(trend_savename)
+
+        this_amp = this_amp.isel({'member': 0})  # signal to noise is large for seasonal cycle, only need 1 member
+        this_phase = this_phase.isel({'member': 0})
+        this_R2 = this_R2.isel({'member': 0})
+        this_trend = this_trend.mean('member')
+
+        is_greenland = (this_amp.lat > 60) & (this_amp.lon > 300)
+        this_mask = is_land & (np.abs(this_amp.lat) > 20) & ~is_greenland
+
+        this_amp = this_amp.sel({'lat': slice(30, 90)})
+        this_amp = this_amp.where(this_mask == 1)
+
+        this_phase = this_phase.sel({'lat': slice(30, 90)})
+        this_phase = this_phase.where(this_mask == 1)
+
+        this_trend = this_trend.sel({'lat': slice(30, 90)})
+        this_trend = this_trend.where(this_mask == 1)
+
+        da_amp.append(this_amp)
+        da_phase.append(this_phase)
+        da_trend.append(this_trend)
+
+    da_amp = xr.concat(da_amp, dim='model', coords='minimal')
+    da_amp = da_amp.assign_coords({'model': list(models)})
+
+    da_phase = xr.concat(da_phase, dim='model', coords='minimal')
+    da_phase = da_phase.assign_coords({'model': list(models)})
+
+    tmp = da_phase.values
+    tmp[tmp < 0] += 365
+    da_phase.values = tmp
+
+    da_trend = xr.concat(da_trend, dim='model', coords='minimal')
+    da_trend = da_trend.assign_coords({'model': list(models)})
+
+    ds_1yr_F = get_heating(forcing)
+
+    da_gain = da_amp/ds_1yr_F['A']
+    da_lag = da_phase - ds_1yr_F['phi']
+
+    tmp = da_lag.values
+    tmp[tmp < 0] += 365
+    tmp[tmp > 100] = np.nan
+    da_lag.values = tmp
+
+    return da_gain, da_lag, da_trend
+
+
+def get_heating(forcing, era5_sw_fname='/glade/work/mckinnon/ERA5/month/ssr/era5_ssr.nc',
+                heatdiv_fname='/glade/work/mckinnon/seasonal/data/AnnualCycle-1979-2020-TEDIV-CSCALE-ERA5-LL90.nc',
+                ceres_sw_fname='/glade/work/mckinnon/CERES/CERES_EBAF-TOA_Ed4.1_Subset_CLIM01-CLIM12.nc'):
+    """Calculate the latitudinal variations in the amplitude and phase of heating at the surface
+
+    Parameters
+    ----------
+    forcing : str
+        Type of forcing to use: 'ERA5_div', 'CERES_div', 'ERA5', 'CERES'
+        ERA5: SW at the surface, CERES: SW at TOA
+        div: to include heat flux divergence from ERA5 or not
+    era5_sw_fname : str
+        Path and filename for SW from ERA5
+    heatdiv_fname : str
+        Path and filename for divergence from ERA5
+    ceres_sw_fname : str
+        Path and filename for SW from CERES
+
+    Returns
+    -------
+    ds_1yr_F : xr.Dataset
+        Amplitude, phase, and variance explained for first annual sinusoid of zonal-average forcing
+
+    """
+
+    # Solar at surface from ERA5
+    if 'ERA5' in forcing:
+        sw_down = xr.open_dataarray(era5_sw_fname)  # J/m2
+        sw_down /= constants.seconds_per_day
+
+        sw_down = sw_down.groupby('time.month').mean()
+        sw_down = sw_down.rename({'latitude': 'lat', 'longitude': 'lon'})
+        sw_down = change_lon_180(sw_down)
+        sw_down = sw_down.interp({'lat': lat1x1, 'lon': lon1x1})
+
+    elif 'CERES' in forcing:
+        ds_ceres = xr.open_dataset(ceres_sw_fname)
+        ds_ceres = ds_ceres.rename({'ctime': 'month'})
+        sw_down = ds_ceres['solar_clim'] - ds_ceres['toa_sw_all_clim']
+
+    # Heat flux divergence
+    ds_heatdiv = xr.open_dataset(heatdiv_fname)
+
+    da_heatdiv = xr.DataArray(ds_heatdiv['AC_TEDIV'].values, dims=('month', 'lat', 'lon'),
+                              coords={'month': ds_heatdiv['time'].values, 'lat': ds_heatdiv['lat'].values,
+                                      'lon': ds_heatdiv['lon'].values + 0.5})
+    da_heatdiv = change_lon_180(da_heatdiv)
+    da_heatdiv = da_heatdiv.sortby('lat')
+
+    if 'div' in forcing:
+        all_heating = sw_down - da_heatdiv
+    else:
+        all_heating = sw_down
+
+    # only consider latitudinal variations in forcing
+    ds_1yr_F, _ = calc_amp_phase(all_heating.mean('lon'))
+
+    return ds_1yr_F
