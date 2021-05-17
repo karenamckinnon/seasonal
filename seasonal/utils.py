@@ -498,10 +498,9 @@ def calc_load_SMILE_trends(models, trend_years, seasonal_years, this_season, for
         phase_savename = '%s/%s_phase.nc' % (savedir, m)
         R2_savename = '%s/%s_R2.nc' % (savedir, m)
         trend_savename = '%s/%s_trend_%s_%i-%i.nc' % (savedir, m, this_season, trend_years[0], trend_years[-1])
-
         files = sorted(glob('%s/%s/%s/%s/*historical_rcp85*nc' % (smile_dir, m, freq, varname)))
 
-        if (os.path.isfile(phase_savename) & os.path.isfile(trend_savename)):
+        if (os.path.isfile(amp_savename) & os.path.isfile(trend_savename)):
             this_amp = xr.open_dataarray(amp_savename)
             this_phase = xr.open_dataarray(phase_savename)
             this_R2 = xr.open_dataarray(R2_savename)
@@ -632,8 +631,9 @@ def get_heating(forcing, era5_sw_fname='/glade/work/mckinnon/ERA5/month/ssr/era5
 
         sw_down = sw_down.groupby('time.month').mean()
         sw_down = sw_down.rename({'latitude': 'lat', 'longitude': 'lon'})
-        sw_down = change_lon_180(sw_down)
+        sw_down = sw_down.sortby('lat')
         sw_down = sw_down.interp({'lat': lat1x1, 'lon': lon1x1})
+        sw_down = change_lon_180(sw_down)
 
     elif 'CERES' in forcing:
         ds_ceres = xr.open_dataset(ceres_sw_fname)
@@ -645,9 +645,10 @@ def get_heating(forcing, era5_sw_fname='/glade/work/mckinnon/ERA5/month/ssr/era5
 
     da_heatdiv = xr.DataArray(ds_heatdiv['AC_TEDIV'].values, dims=('month', 'lat', 'lon'),
                               coords={'month': ds_heatdiv['time'].values, 'lat': ds_heatdiv['lat'].values,
-                                      'lon': ds_heatdiv['lon'].values + 0.5})
-    da_heatdiv = change_lon_180(da_heatdiv)
+                                      'lon': ds_heatdiv['lon'].values})
     da_heatdiv = da_heatdiv.sortby('lat')
+    da_heatdiv = da_heatdiv.interp({'lat': lat1x1, 'lon': lon1x1})
+    da_heatdiv = change_lon_180(da_heatdiv)
 
     if 'div' in forcing:
         all_heating = sw_down - da_heatdiv
