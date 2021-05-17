@@ -4,7 +4,7 @@ import numpy as np
 rho = 1030  # kg/m3
 cp = 4180  # J/kg/K
 mwe = rho*cp
-C_land = 1*mwe
+C_land = 0.75*mwe
 C_ocean = 54*mwe
 C_od = 673*mwe
 gamma = 0.74
