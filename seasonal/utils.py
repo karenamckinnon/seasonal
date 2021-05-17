@@ -451,7 +451,7 @@ def calc_trend_season(da, trend_years, this_season):
     return da_beta
 
 
-def calc_load_SMILE_trends(models, trend_years, seasonal_years, this_season, forcing, savedir, do_boot=False):
+def calc_load_SMILE_trends(models, trend_years, seasonal_years, this_season, forcing, savedir):
     """Calculate or load pre-calculated seasonal cycle and trend metrics from each SMILE.
 
     Parameters
@@ -470,8 +470,6 @@ def calc_load_SMILE_trends(models, trend_years, seasonal_years, this_season, for
         div: to include heat flux divergence from ERA5 or not
     savedir : str
         Where to save the netcdfs with the seasonal cycle and trend
-    do_boot : bool
-        Resample among members to get trend variability?
 
     Returns
     -------
@@ -494,7 +492,6 @@ def calc_load_SMILE_trends(models, trend_years, seasonal_years, this_season, for
     da_trend = []
 
     for m in models:
-        print(m)
 
         amp_savename = '%s/%s_amplitude.nc' % (savedir, m)
         phase_savename = '%s/%s_phase.nc' % (savedir, m)
@@ -508,7 +505,7 @@ def calc_load_SMILE_trends(models, trend_years, seasonal_years, this_season, for
             this_R2 = xr.open_dataarray(R2_savename)
             this_trend = xr.open_dataarray(trend_savename)
         else:
-
+            print(m)
             this_amp = []
             this_phase = []
             this_R2 = []
@@ -557,11 +554,6 @@ def calc_load_SMILE_trends(models, trend_years, seasonal_years, this_season, for
         this_amp = this_amp.isel({'member': 0})  # signal to noise is large for seasonal cycle, only need 1 member
         this_phase = this_phase.isel({'member': 0})
         this_R2 = this_R2.isel({'member': 0})
-        # Resample members for the trend calculation
-        if do_boot:
-            this_trend['member'] = np.arange(0, len(this_trend['member']))
-            this_trend = this_trend.sel({'member': np.random.choice(this_trend['member'], len(this_trend['member']))})
-
         this_trend = this_trend.mean('member')
 
         is_greenland = (this_amp.lat > 60) & (this_amp.lon > 300)
