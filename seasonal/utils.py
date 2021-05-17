@@ -451,7 +451,7 @@ def calc_trend_season(da, trend_years, this_season):
     return da_beta
 
 
-def calc_load_SMILE_trends(models, trend_years, seasonal_years, this_season, forcing, savedir):
+def calc_load_SMILE_trends(models, trend_years, seasonal_years, this_season, forcing, savedir, do_boot=False):
     """Calculate or load pre-calculated seasonal cycle and trend metrics from each SMILE.
 
     Parameters
@@ -470,6 +470,8 @@ def calc_load_SMILE_trends(models, trend_years, seasonal_years, this_season, for
         div: to include heat flux divergence from ERA5 or not
     savedir : str
         Where to save the netcdfs with the seasonal cycle and trend
+    do_boot : bool
+        Resample among members to get trend variability?
 
     Returns
     -------
@@ -555,6 +557,11 @@ def calc_load_SMILE_trends(models, trend_years, seasonal_years, this_season, for
         this_amp = this_amp.isel({'member': 0})  # signal to noise is large for seasonal cycle, only need 1 member
         this_phase = this_phase.isel({'member': 0})
         this_R2 = this_R2.isel({'member': 0})
+        # Resample members for the trend calculation
+        if do_boot:
+            this_trend['member'] = np.arange(0, len(this_trend['member']))
+            this_trend = this_trend.sel({'member': np.random.choice(this_trend['member'], len(this_trend['member']))})
+
         this_trend = this_trend.mean('member')
 
         is_greenland = (this_amp.lat > 60) & (this_amp.lon > 300)
@@ -659,3 +666,73 @@ def get_heating(forcing, era5_sw_fname='/glade/work/mckinnon/ERA5/month/ssr/era5
     ds_1yr_F, _ = calc_amp_phase(all_heating.mean('lon'))
 
     return ds_1yr_F
+
+
+def predict_with_ebm(da_gain, da_lag, da_gain_ebm, da_lag_ebm, da_trend_ebm, dataname, forcing, savedir):
+    """Use gain and lag from obs or model + EBM prediction to map from seasonal cycle to temperature trends.
+
+    Parameters
+    ----------
+    da_gain : xr.DataArray
+        Gain from observations or model
+    da_lag : xr.DataArray
+        Lag from observations or model
+    da_gain_ebm : xr.DataArray
+        Gain in the EBM
+    da_lag_ebm : xr.DataArray
+        Lag in EBM
+    da_trend_ebm : xr.DataArray
+        Temperature trend in EBM. Will be a function of the forcing and trend years, specified earlier.
+    dataname : str
+        Name of data or model for the seasonal cycle
+    forcing : str
+        Type of heating for seasonal cycle: 'ERA5_div', 'CERES_div', 'ERA5', 'CERES'
+        ERA5: SW at the surface, CERES: SW at TOA
+        div: to include heat flux divergence from ERA5 or not
+    savedir : str
+        Where to save the netcdfs with the seasonal cycle and trend
+
+    Returns
+    -------
+    da_T_pred : xr.DataArray
+        Temperature trend prediction at each location from the EBM.
+
+    """
+
+    savename = '%s/ebm_predicted_T_trend_%s_F-%s.nc' % (savedir, dataname, forcing)
+    if os.path.isfile(savename):
+        da_T_pred = xr.open_dataarray(savename)
+    else:
+        da_T_pred = []
+        for this_lat in da_gain.lat:
+            if this_lat < 30:  # only do predictions in the NH extratropics
+                continue
+            this_gain = da_gain.sel({'lat': this_lat})
+            this_lag = da_lag.sel({'lat': this_lat})
+
+            # At every gridbox, find the closest gain and lag from the EBM.
+            T_pred = []
+            for this_lon in this_gain.lon:
+
+                if np.isnan(this_lag.sel({'lon': this_lon}).values):  # over ocean
+                    T_pred.append(np.nan)
+                else:
+                    delta_gain = da_gain_ebm - this_gain.sel({'lon': this_lon}).values
+                    delta_lag = da_lag_ebm - this_lag.sel({'lon': this_lon}).values
+
+                    # normalize for fair comparison in "distance"
+                    delta_gain = delta_gain/this_gain.std('lon')
+                    delta_lag = delta_lag/this_lag.std('lon')
+
+                    d = np.sqrt(delta_gain**2 + delta_lag**2)
+                    idx_match = np.where(d == d.min())
+                    T_pred.append(da_trend_ebm[idx_match].values.flatten()[0])
+
+            da_T_pred.append(xr.DataArray(np.array(T_pred), dims=('lon'), coords={'lon': this_gain.lon}))
+
+        da_T_pred = xr.concat(da_T_pred, dim='lat')
+        da_T_pred['lat'] = da_gain.lat[da_gain.lat >= 30]
+
+        da_T_pred.to_netcdf(savename)
+
+    return da_T_pred
