@@ -598,7 +598,7 @@ def calc_load_SMILE_trends(models, trend_years, seasonal_years, this_season, for
     return da_gain, da_lag, da_trend
 
 
-def get_heating(forcing, era5_sw_fname='/glade/work/mckinnon/ERA5/month/ssr/era5_ssr.nc',
+def get_heating(forcing, return_components=False, era5_sw_fname='/glade/work/mckinnon/ERA5/month/ssr/era5_ssr.nc',
                 heatdiv_fname='/glade/work/mckinnon/seasonal/data/AnnualCycle-1979-2020-TEDIV-CSCALE-ERA5-LL90.nc',
                 ceres_sw_fname='/glade/work/mckinnon/CERES/CERES_EBAF-TOA_Ed4.1_Subset_CLIM01-CLIM12.nc'):
     """Calculate the latitudinal variations in the amplitude and phase of heating at the surface
@@ -609,6 +609,8 @@ def get_heating(forcing, era5_sw_fname='/glade/work/mckinnon/ERA5/month/ssr/era5
         Type of forcing to use: 'ERA5_div', 'CERES_div', 'ERA5', 'CERES'
         ERA5: SW at the surface, CERES: SW at TOA
         div: to include heat flux divergence from ERA5 or not
+    return_components : bool
+        Indicator of whether to also return the sw_down and div fields
     era5_sw_fname : str
         Path and filename for SW from ERA5
     heatdiv_fname : str
@@ -657,7 +659,12 @@ def get_heating(forcing, era5_sw_fname='/glade/work/mckinnon/ERA5/month/ssr/era5
     # only consider latitudinal variations in forcing
     ds_1yr_F, _ = calc_amp_phase(all_heating.mean('lon'))
 
-    return ds_1yr_F
+    if return_components & ('div' in forcing):
+        return ds_1yr_F, sw_down, da_heatdiv
+    elif return_components & ('div' not in forcing):
+        return ds_1yr_F, sw_down
+    else:
+        return ds_1yr_F
 
 
 def predict_with_ebm(da_gain, da_lag, da_gain_ebm, da_lag_ebm, da_trend_ebm, dataname, forcing, savedir):
