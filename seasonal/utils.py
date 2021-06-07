@@ -178,7 +178,7 @@ def seasonal_solution(m, lam):
     lam = lam[:, np.newaxis]
 
     A1 = m*(constants.omega**2*constants.C_land**2 + lam**2)**(-1/2)
-    A2 = (1 - m)*(constants.omega**2*constants.C_ocean**2 + lam**2)**(-1/2)
+    A2 = (1 - m)*(constants.omega**2*constants.C_ocean**2 + constants.lam_ocean**2)**(-1/2)
     cos_phi1 = lam*(constants.omega**2*constants.C_land**2 + lam**2)**(-1/2)
     sin_phi1 = constants.omega*constants.C_land*(constants.omega**2*constants.C_land**2 + lam**2)**(-1/2)
 
