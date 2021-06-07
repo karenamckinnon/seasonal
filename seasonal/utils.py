@@ -254,13 +254,15 @@ def ramp_solution(m, lam, dF=3.74, yrs_ramp=np.arange(1971, 2051), return_endmem
     m = m[np.newaxis, :]
     lam = lam[:, np.newaxis]
 
-    b, b_star, delta, tau_f, tau_s, phi_f, phi_s, a_f, a_s = get_soln_constants(lam)
-
     k = dF/(nyrs*constants.days_per_year*constants.seconds_per_day)
 
+    # Use a single lambda for the ocean
+    b, b_star, delta, tau_f, tau_s, phi_f, phi_s, a_f, a_s = get_soln_constants(constants.lam_ocean)
     T_anom_ocean_linear = k/lam*(t - tau_f*a_f*(1 - np.exp(-t/tau_f)) -
                                  tau_s*a_s*(1 - np.exp(-t/tau_s)))
 
+    # Use variable values of lambda for the land
+    b, b_star, delta, tau_f, tau_s, phi_f, phi_s, a_f, a_s = get_soln_constants(lam)
     tau_land = constants.C_land/lam
     T_anom_land_linear = k/lam*(t - tau_land*(1 - np.exp(-t/tau_land)))
 
@@ -312,14 +314,17 @@ def ramp_stabilize_solution(m, lam, dF=3.74, yrs_ramp=np.arange(1971, 2051), yrs
     m = m[np.newaxis, :]
     lam = lam[:, np.newaxis]
 
-    b, b_star, delta, tau_f, tau_s, phi_f, phi_s, a_f, a_s = get_soln_constants(lam)
-
     k = dF/(nyrs_ramp*constants.days_per_year*constants.seconds_per_day)
+
+    # Use a single lambda for the ocean
+    b, b_star, delta, tau_f, tau_s, phi_f, phi_s, a_f, a_s = get_soln_constants(constants.lam_ocean)
 
     slow_term = tau_s*a_s*(1 - np.exp(-t_st/tau_s))*np.exp(-(t2 - t_st)/tau_s)
     fast_term = tau_f*a_f*(1 - np.exp(-t_st/tau_f))*np.exp(-(t2 - t_st)/tau_f)
     T_anom_ocean_stable = k/lam*(t_st - slow_term - fast_term)
 
+    # but use variable lambda for land
+    b, b_star, delta, tau_f, tau_s, phi_f, phi_s, a_f, a_s = get_soln_constants(lam)
     tau_land = constants.C_land/lam
     T_anom_land_stable = k/lam*(t_st - tau_land*(1 - np.exp(-t_st/tau_land))*np.exp(-(t2 - t_st)/tau_land))
 
