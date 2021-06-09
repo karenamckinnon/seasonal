@@ -704,10 +704,17 @@ def predict_with_ebm(da_gain, da_lag, da_gain_ebm, da_lag_ebm, da_trend_ebm, dat
     """
 
     savename = '%s/ebm_predicted_T_trend_%s_F-%s.nc' % (savedir, dataname, forcing)
-    if os.path.isfile(savename):
+    savename_lam = '%s/ebm_inferred_lam_%s_F-%s.nc' % (savedir, dataname, forcing)
+    savename_mix = '%s/ebm_inferred_mix_%s_F-%s.nc' % (savedir, dataname, forcing)
+
+    if os.path.isfile(savename) & os.path.isfile(savename_lam) & os.path.isfile(savename_mix):
         da_T_pred = xr.open_dataarray(savename)
+        da_lam_inferred = xr.open_dataarray(savename_lam)
+        da_mix_inferred = xr.open_dataarray(savename_mix)
     else:
         da_T_pred = []
+        da_lam_inferred = []
+        da_mix_inferred = []
         for this_lat in da_gain.lat:
             if this_lat < 30:  # only do predictions in the NH extratropics
                 continue
@@ -716,6 +723,8 @@ def predict_with_ebm(da_gain, da_lag, da_gain_ebm, da_lag_ebm, da_trend_ebm, dat
 
             # At every gridbox, find the closest gain and lag from the EBM.
             T_pred = []
+            lam_value = []
+            mixing_value = []
             for this_lon in this_gain.lon:
 
                 if np.isnan(this_lag.sel({'lon': this_lon}).values):  # over ocean
@@ -732,11 +741,25 @@ def predict_with_ebm(da_gain, da_lag, da_gain_ebm, da_lag_ebm, da_trend_ebm, dat
                     idx_match = np.where(d == d.min())
                     T_pred.append(da_trend_ebm[idx_match].values.flatten()[0])
 
+                    # also find matching value of m, lambda
+                    lam_value.append(da_trend_ebm[idx_match].coords['lambda'].values[0])
+                    mixing_value.append(da_trend_ebm[idx_match].coords['mixing'].values[0])
+
             da_T_pred.append(xr.DataArray(np.array(T_pred), dims=('lon'), coords={'lon': this_gain.lon}))
+            da_lam_inferred.append(xr.DataArray(np.array(lam_value), dims=('lon'), coords={'lon': this_gain.lon}))
+            da_mix_inferred.append(xr.DataArray(np.array(mixing_value), dims=('lon'), coords={'lon': this_gain.lon}))
 
         da_T_pred = xr.concat(da_T_pred, dim='lat')
         da_T_pred['lat'] = da_gain.lat[da_gain.lat >= 30]
 
-        da_T_pred.to_netcdf(savename)
+        da_lam_inferred = xr.concat(da_lam_inferred, dim='lat')
+        da_lam_inferred['lat'] = da_gain.lat[da_gain.lat >= 30]
 
-    return da_T_pred
+        da_mix_inferred = xr.concat(da_mix_inferred, dim='lat')
+        da_mix_inferred['lat'] = da_gain.lat[da_gain.lat >= 30]
+
+        da_T_pred.to_netcdf(savename)
+        da_lam_inferred.to_netcdf(savename_lam)
+        da_mix_inferred.to_netcdf(savename_mix)
+
+    return da_T_pred, da_lam_inferred, da_mix_inferred
