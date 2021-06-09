@@ -729,6 +729,8 @@ def predict_with_ebm(da_gain, da_lag, da_gain_ebm, da_lag_ebm, da_trend_ebm, dat
 
                 if np.isnan(this_lag.sel({'lon': this_lon}).values):  # over ocean
                     T_pred.append(np.nan)
+                    lam_value.append(np.nan)
+                    mixing_value.append(np.nan)
                 else:
                     delta_gain = da_gain_ebm - this_gain.sel({'lon': this_lon}).values
                     delta_lag = da_lag_ebm - this_lag.sel({'lon': this_lon}).values
