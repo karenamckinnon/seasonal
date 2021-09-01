@@ -525,7 +525,7 @@ def calc_load_SMILE_seasonal_cycle(models, seasonal_years, nboot, savedir):
             ds_1yr_T_boot = xr.concat(ds_1yr_T_boot, dim='sample')
             ds_1yr_T_boot.attrs = {'sc_years': seasonal_years}
             ds_1yr_T_boot.to_netcdf(savename)
-            ds_seasonal.append(ds_1yr_T_boot)
+        ds_seasonal.append(ds_1yr_T_boot)
 
     ds_seasonal = xr.concat(ds_seasonal, dim='model', coords='minimal')
     ds_seasonal = ds_seasonal.assign_coords({'model': list(models)})
