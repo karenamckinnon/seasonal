@@ -514,7 +514,7 @@ def calc_load_SMILE_seasonal_cycle(models, seasonal_years, nboot, savedir):
                 boot_years = np.random.choice(unique_years, len(unique_years))
                 new_idx = [np.where(years == by)[0] for by in boot_years]
                 new_idx = np.array(new_idx).flatten()
-                da_boot = da_seasonal.isel(time=new_idx).groupby('tme.month').mean()
+                da_boot = da_seasonal.isel(time=new_idx).groupby('time.month').mean()
 
                 ds_1yr_T, _ = calc_amp_phase(da_boot)
                 tmp = ds_1yr_T['phi'].values
