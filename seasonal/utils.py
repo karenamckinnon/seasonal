@@ -178,7 +178,7 @@ def seasonal_solution(m, lam):
     lam = lam[:, np.newaxis]
 
     A1 = m*(constants.omega**2*constants.C_land**2 + lam**2)**(-1/2)
-    A2 = (1 - m)*(constants.omega**2*constants.C_ocean**2 + lam**2)**(-1/2)
+    A2 = (1 - m)*(constants.omega**2*constants.C_ocean**2 + constants.lam_ocean**2)**(-1/2)
     cos_phi1 = lam*(constants.omega**2*constants.C_land**2 + lam**2)**(-1/2)
     sin_phi1 = constants.omega*constants.C_land*(constants.omega**2*constants.C_land**2 + lam**2)**(-1/2)
 
@@ -254,13 +254,15 @@ def ramp_solution(m, lam, dF=3.74, yrs_ramp=np.arange(1971, 2051), return_endmem
     m = m[np.newaxis, :]
     lam = lam[:, np.newaxis]
 
-    b, b_star, delta, tau_f, tau_s, phi_f, phi_s, a_f, a_s = get_soln_constants(lam)
-
     k = dF/(nyrs*constants.days_per_year*constants.seconds_per_day)
 
+    # Use a single lambda for the ocean
+    b, b_star, delta, tau_f, tau_s, phi_f, phi_s, a_f, a_s = get_soln_constants(constants.lam_ocean)
     T_anom_ocean_linear = k/lam*(t - tau_f*a_f*(1 - np.exp(-t/tau_f)) -
                                  tau_s*a_s*(1 - np.exp(-t/tau_s)))
 
+    # Use variable values of lambda for the land
+    b, b_star, delta, tau_f, tau_s, phi_f, phi_s, a_f, a_s = get_soln_constants(lam)
     tau_land = constants.C_land/lam
     T_anom_land_linear = k/lam*(t - tau_land*(1 - np.exp(-t/tau_land)))
 
@@ -312,14 +314,17 @@ def ramp_stabilize_solution(m, lam, dF=3.74, yrs_ramp=np.arange(1971, 2051), yrs
     m = m[np.newaxis, :]
     lam = lam[:, np.newaxis]
 
-    b, b_star, delta, tau_f, tau_s, phi_f, phi_s, a_f, a_s = get_soln_constants(lam)
-
     k = dF/(nyrs_ramp*constants.days_per_year*constants.seconds_per_day)
+
+    # Use a single lambda for the ocean
+    b, b_star, delta, tau_f, tau_s, phi_f, phi_s, a_f, a_s = get_soln_constants(constants.lam_ocean)
 
     slow_term = tau_s*a_s*(1 - np.exp(-t_st/tau_s))*np.exp(-(t2 - t_st)/tau_s)
     fast_term = tau_f*a_f*(1 - np.exp(-t_st/tau_f))*np.exp(-(t2 - t_st)/tau_f)
     T_anom_ocean_stable = k/lam*(t_st - slow_term - fast_term)
 
+    # but use variable lambda for land
+    b, b_star, delta, tau_f, tau_s, phi_f, phi_s, a_f, a_s = get_soln_constants(lam)
     tau_land = constants.C_land/lam
     T_anom_land_stable = k/lam*(t_st - tau_land*(1 - np.exp(-t_st/tau_land))*np.exp(-(t2 - t_st)/tau_land))
 
@@ -699,10 +704,17 @@ def predict_with_ebm(da_gain, da_lag, da_gain_ebm, da_lag_ebm, da_trend_ebm, dat
     """
 
     savename = '%s/ebm_predicted_T_trend_%s_F-%s.nc' % (savedir, dataname, forcing)
-    if os.path.isfile(savename):
+    savename_lam = '%s/ebm_inferred_lam_%s_F-%s.nc' % (savedir, dataname, forcing)
+    savename_mix = '%s/ebm_inferred_mix_%s_F-%s.nc' % (savedir, dataname, forcing)
+
+    if os.path.isfile(savename) & os.path.isfile(savename_lam) & os.path.isfile(savename_mix):
         da_T_pred = xr.open_dataarray(savename)
+        da_lam_inferred = xr.open_dataarray(savename_lam)
+        da_mix_inferred = xr.open_dataarray(savename_mix)
     else:
         da_T_pred = []
+        da_lam_inferred = []
+        da_mix_inferred = []
         for this_lat in da_gain.lat:
             if this_lat < 30:  # only do predictions in the NH extratropics
                 continue
@@ -711,10 +723,14 @@ def predict_with_ebm(da_gain, da_lag, da_gain_ebm, da_lag_ebm, da_trend_ebm, dat
 
             # At every gridbox, find the closest gain and lag from the EBM.
             T_pred = []
+            lam_value = []
+            mixing_value = []
             for this_lon in this_gain.lon:
 
                 if np.isnan(this_lag.sel({'lon': this_lon}).values):  # over ocean
                     T_pred.append(np.nan)
+                    lam_value.append(np.nan)
+                    mixing_value.append(np.nan)
                 else:
                     delta_gain = da_gain_ebm - this_gain.sel({'lon': this_lon}).values
                     delta_lag = da_lag_ebm - this_lag.sel({'lon': this_lon}).values
@@ -727,11 +743,25 @@ def predict_with_ebm(da_gain, da_lag, da_gain_ebm, da_lag_ebm, da_trend_ebm, dat
                     idx_match = np.where(d == d.min())
                     T_pred.append(da_trend_ebm[idx_match].values.flatten()[0])
 
+                    # also find matching value of m, lambda
+                    lam_value.append(da_trend_ebm[idx_match].coords['lambda'].values[0])
+                    mixing_value.append(da_trend_ebm[idx_match].coords['mixing'].values[0])
+
             da_T_pred.append(xr.DataArray(np.array(T_pred), dims=('lon'), coords={'lon': this_gain.lon}))
+            da_lam_inferred.append(xr.DataArray(np.array(lam_value), dims=('lon'), coords={'lon': this_gain.lon}))
+            da_mix_inferred.append(xr.DataArray(np.array(mixing_value), dims=('lon'), coords={'lon': this_gain.lon}))
 
         da_T_pred = xr.concat(da_T_pred, dim='lat')
         da_T_pred['lat'] = da_gain.lat[da_gain.lat >= 30]
 
-        da_T_pred.to_netcdf(savename)
+        da_lam_inferred = xr.concat(da_lam_inferred, dim='lat')
+        da_lam_inferred['lat'] = da_gain.lat[da_gain.lat >= 30]
 
-    return da_T_pred
+        da_mix_inferred = xr.concat(da_mix_inferred, dim='lat')
+        da_mix_inferred['lat'] = da_gain.lat[da_gain.lat >= 30]
+
+        da_T_pred.to_netcdf(savename)
+        da_lam_inferred.to_netcdf(savename_lam)
+        da_mix_inferred.to_netcdf(savename_mix)
+
+    return da_T_pred, da_lam_inferred, da_mix_inferred
