@@ -456,8 +456,85 @@ def calc_trend_season(da, trend_years, this_season):
     return da_beta
 
 
-def calc_load_SMILE_trends(models, trend_years, seasonal_years, this_season, forcing, savedir):
-    """Calculate or load pre-calculated seasonal cycle and trend metrics from each SMILE.
+def calc_load_SMILE_seasonal_cycle(models, seasonal_years, nboot, savedir):
+    """Calculate or load pre-calculated seasonal cycle in temperature, with bootstrapping, from each SMILE.
+
+    Parameters
+    ----------
+    models : list
+        Names (matching paths) of each SMILE
+    seasonal_years : tuple
+        The start and end year of the data to be used to calculate the seasonal cycle
+    nboot : int
+        How many bootstrap resamples to perform
+    savedir : str
+        Where to save the netcdfs with the seasonal cycle metrics
+
+    Returns
+    -------
+    ds_seasonal : xr.DataSet
+        Dataset containing amplitude and phase of the seasonal cycle, across bootstrap samples
+
+    """
+
+    # monthly temperature
+    freq = 'Amon'
+    varname = 'tas'
+    ds_seasonal = []
+    for m in models:
+
+        savename = '%s/%s_seasonal_cycle_%s.nc' % (savedir, m, varname)
+        files = sorted(glob('%s/%s/%s/%s/*historical_rcp85*nc' % (smile_dir, m, freq, varname)))
+
+        if os.path.isfile(savename):
+            ds_1yr_T_boot = xr.open_dataset(savename)
+        else:
+            f = files[0]  # using first member of each ensemble for seasonal cycle
+
+            if m == 'ec_earth_lens':
+                ds = xr.open_dataset(f, decode_times=False)
+                new_time = pd.date_range(start='1860-01-01', periods=len(ds.time), freq='M')
+                ds = ds.assign_coords({'time': new_time})
+            else:
+                ds = xr.open_dataset(f)
+
+            da = ds[varname].load()
+
+            da = da.interp({'lat': lat1x1, 'lon': lon1x1})
+
+            da_seasonal = da.copy().sel({'time': (da['time.year'] >= seasonal_years[0]) &
+                                                 (da['time.year'] <= seasonal_years[1])})
+
+            da_seasonal = do_mask(da_seasonal)
+            years = da_seasonal['time.year'].values
+            unique_years = np.unique(years)
+            # resample years to get uncertainty in seasonal cycle
+            ds_1yr_T_boot = []
+            for kk in range(nboot):
+                boot_years = np.random.choice(unique_years, len(unique_years))
+                new_idx = [np.where(years == by)[0] for by in boot_years]
+                new_idx = np.array(new_idx).flatten()
+                da_boot = da_seasonal.isel(time=new_idx).groupby('tme.month').mean()
+
+                ds_1yr_T, _ = calc_amp_phase(da_boot)
+                tmp = ds_1yr_T['phi'].values
+                tmp[tmp < 0] += 365
+                ds_1yr_T['phi'].values = tmp
+                ds_1yr_T_boot.append(ds_1yr_T)
+
+            ds_1yr_T_boot = xr.concat(ds_1yr_T_boot, dim='sample')
+            ds_1yr_T_boot.attrs = {'sc_years': seasonal_years}
+            ds_1yr_T_boot.to_netcdf(savename)
+            ds_seasonal.append(ds_1yr_T_boot)
+
+    ds_seasonal = xr.concat(ds_seasonal, dim='model', coords='minimal')
+    ds_seasonal = ds_seasonal.assign_coords({'model': list(models)})
+
+    return ds_seasonal
+
+
+def calc_load_SMILE_trends(models, trend_years, this_season, savedir):
+    """Calculate or load pre-calculated trends from each SMILE.
 
     Parameters
     ----------
@@ -465,25 +542,15 @@ def calc_load_SMILE_trends(models, trend_years, seasonal_years, this_season, for
         Names (matching paths) of each SMILE
     trend_years : tuple
         The start and end year of the trend to calculate
-    seasonal_years : tuple
-        The start and end year of the data to be used to calculate the seasonal cycle
     this_season : str
         Standard season e.g. 'DJF' or 'ann' (annual mean) over which averages are taken before calculating trend
-    forcing : str
-        Type of heating for seasonal cycle: 'ERA5_div', 'CERES_div', 'ERA5', 'CERES'
-        ERA5: SW at the surface, CERES: SW at TOA
-        div: to include heat flux divergence from ERA5 or not
     savedir : str
-        Where to save the netcdfs with the seasonal cycle and trend
+        Where to save the netcdfs with the trends of each ensemble member in each model
 
     Returns
     -------
-    da_gain : xr.DataArray
-        Gain of the seasonal cycle (based on member 1) for each SMILE
-    da_lag : xr.DataArray
-        Lag of the seasonal cycle (in days, based on member 1) for each SMILE
     da_trend : xr.DataArray
-        Trend over the specified trend years in each SMILE
+        Ensemble-mean trend over the specified trend years in each SMILE
 
     """
 
@@ -491,29 +558,18 @@ def calc_load_SMILE_trends(models, trend_years, seasonal_years, this_season, for
     freq = 'Amon'
     varname = 'tas'
 
-    # Collect all the amplitude, phases, and trends
-    da_amp = []
-    da_phase = []
+    # Collect EM trends across models
     da_trend = []
 
     for m in models:
 
-        amp_savename = '%s/%s_amplitude.nc' % (savedir, m)
-        phase_savename = '%s/%s_phase.nc' % (savedir, m)
-        R2_savename = '%s/%s_R2.nc' % (savedir, m)
         trend_savename = '%s/%s_trend_%s_%i-%i.nc' % (savedir, m, this_season, trend_years[0], trend_years[-1])
         files = sorted(glob('%s/%s/%s/%s/*historical_rcp85*nc' % (smile_dir, m, freq, varname)))
 
-        if (os.path.isfile(amp_savename) & os.path.isfile(trend_savename)):
-            this_amp = xr.open_dataarray(amp_savename)
-            this_phase = xr.open_dataarray(phase_savename)
-            this_R2 = xr.open_dataarray(R2_savename)
+        if os.path.isfile(trend_savename):
             this_trend = xr.open_dataarray(trend_savename)
         else:
             print(m)
-            this_amp = []
-            this_phase = []
-            this_R2 = []
             this_trend = []
 
             for counter, f in enumerate(files):
@@ -529,78 +585,33 @@ def calc_load_SMILE_trends(models, trend_years, seasonal_years, this_season, for
                 da = ds[varname].load()
 
                 da = da.interp({'lat': lat1x1, 'lon': lon1x1})
+                # mask out ocean, greenland, and remove south of 30N
+                da = do_mask(da)
 
-                da_seasonal = da.copy().sel({'time': (da['time.year'] >= seasonal_years[0]) &
-                                             (da['time.year'] <= seasonal_years[1])}).groupby('time.month').mean()
+                this_trend.append(calc_trend_season(da, trend_years, this_season))
 
-                ds_1yr_T, _ = calc_amp_phase(da_seasonal)
-
-                this_amp.append(ds_1yr_T['A'])
-                this_phase.append(ds_1yr_T['phi'])
-                this_R2.append(ds_1yr_T['R2'])
-
-                this_trend.append(calc_trend_season(da.copy(), trend_years, this_season))
-
-            this_amp = xr.concat(this_amp, dim='member')
-            this_phase = xr.concat(this_phase, dim='member')
-            this_R2 = xr.concat(this_R2, dim='member')
             this_trend = xr.concat(this_trend, dim='member')
-
-            this_amp.attrs = {'sc_years': seasonal_years}
-            this_phase.attrs = {'sc_years': seasonal_years}
-            this_phase.attrs = {'sc_years': seasonal_years}
             this_trend.attrs = {'trend_years': trend_years}
-
-            this_amp.to_netcdf(amp_savename)
-            this_phase.to_netcdf(phase_savename)
-            this_R2.to_netcdf(R2_savename)
             this_trend.to_netcdf(trend_savename)
 
-        this_amp = this_amp.isel({'member': 0})  # signal to noise is large for seasonal cycle, only need 1 member
-        this_phase = this_phase.isel({'member': 0})
-        this_R2 = this_R2.isel({'member': 0})
         this_trend = this_trend.mean('member')
-
-        is_greenland = (this_amp.lat > 60) & (this_amp.lon > 300)
-        this_mask = is_land & (np.abs(this_amp.lat) > 20) & ~is_greenland
-
-        this_amp = this_amp.sel({'lat': slice(30, 90)})
-        this_amp = this_amp.where(this_mask == 1)
-
-        this_phase = this_phase.sel({'lat': slice(30, 90)})
-        this_phase = this_phase.where(this_mask == 1)
-
-        this_trend = this_trend.sel({'lat': slice(30, 90)})
-        this_trend = this_trend.where(this_mask == 1)
-
-        da_amp.append(this_amp)
-        da_phase.append(this_phase)
         da_trend.append(this_trend)
-
-    da_amp = xr.concat(da_amp, dim='model', coords='minimal')
-    da_amp = da_amp.assign_coords({'model': list(models)})
-
-    da_phase = xr.concat(da_phase, dim='model', coords='minimal')
-    da_phase = da_phase.assign_coords({'model': list(models)})
-
-    tmp = da_phase.values
-    tmp[tmp < 0] += 365
-    da_phase.values = tmp
 
     da_trend = xr.concat(da_trend, dim='model', coords='minimal')
     da_trend = da_trend.assign_coords({'model': list(models)})
 
-    ds_1yr_F = get_heating(forcing)
+    return da_trend
 
-    da_gain = da_amp/ds_1yr_F['A']
-    da_lag = da_phase - ds_1yr_F['phi']
 
-    tmp = da_lag.values
-    tmp[tmp < 0] += 365
-    tmp[tmp > 100] = np.nan
-    da_lag.values = tmp
+def do_mask(da):
+    """Mask out Greenland and ocean, and remove south of 30N for 1x1 data"""
 
-    return da_gain, da_lag, da_trend
+    is_greenland = (da.lat > 60) & (da.lon > 300)
+    this_mask = is_land & ~is_greenland
+    da = da.where(this_mask == 1)
+    da = da.sel({'lat': slice(30, 90)})
+
+    return da
 
 
 def get_heating(forcing, return_components=False, era5_sw_fname='/glade/work/mckinnon/ERA5/month/ssr/era5_ssr.nc',
