@@ -614,8 +614,9 @@ def do_mask(da):
     return da
 
 
-def get_heating(forcing, return_components=False, era5_sw_fname='/glade/work/mckinnon/ERA5/month/ssr/era5_ssr.nc',
-                heatdiv_fname='/glade/work/mckinnon/seasonal/data/AnnualCycle-1979-2020-TEDIV-CSCALE-ERA5-LL90.nc',
+def get_heating(forcing, nboot,
+                return_components=False, era5_sw_fname='/glade/work/mckinnon/ERA5/month/ssr/era5_ssr.nc',
+                heatdiv_fname='/glade/work/mckinnon/seasonal/data/ZonalMean-1979-2020-TEDIV-CSCALE-ERA5-LL90.nc',
                 ceres_sw_fname='/glade/work/mckinnon/CERES/CERES_EBAF-TOA_Ed4.1_Subset_CLIM01-CLIM12.nc'):
     """Calculate the latitudinal variations in the amplitude and phase of heating at the surface
 
@@ -625,6 +626,8 @@ def get_heating(forcing, return_components=False, era5_sw_fname='/glade/work/mck
         Type of forcing to use: 'ERA5_div', 'CERES_div', 'ERA5', 'CERES'
         ERA5: SW at the surface, CERES: SW at TOA
         div: to include heat flux divergence from ERA5 or not
+    nboot : int
+        Number of times to bootstrap resample years
     return_components : bool
         Indicator of whether to also return the sw_down and div fields
     era5_sw_fname : str
@@ -641,46 +644,52 @@ def get_heating(forcing, return_components=False, era5_sw_fname='/glade/work/mck
 
     """
 
-    # Solar at surface from ERA5
-    if 'ERA5' in forcing:
-        sw_down = xr.open_dataarray(era5_sw_fname)  # J/m2
-        sw_down /= constants.seconds_per_day
+    if 'CERES' in forcing:
+        raise ValueError('CERES TOA not currently included')
 
-        sw_down = sw_down.groupby('time.month').mean()
-        sw_down = sw_down.rename({'latitude': 'lat', 'longitude': 'lon'})
-        sw_down = sw_down.sortby('lat')
-        sw_down = sw_down.interp({'lat': lat1x1, 'lon': lon1x1})
-        sw_down = change_lon_180(sw_down)
+    sw_net = xr.open_dataarray(era5_sw_fname)  # J/m2
+    sw_net /= constants.seconds_per_day  # monthly data, accumulation period is one day
 
-    elif 'CERES' in forcing:
-        ds_ceres = xr.open_dataset(ceres_sw_fname)
-        ds_ceres = ds_ceres.rename({'ctime': 'month'})
-        sw_down = ds_ceres['solar_clim'] - ds_ceres['toa_sw_all_clim']
+    sw_net = sw_net.rename({'latitude': 'lat', 'longitude': 'lon'})
+    sw_net = sw_net.sortby('lat')
+    sw_net = sw_net.mean('lon')
+    sw_net = sw_net.interp({'lat': lat1x1})
 
     # Heat flux divergence
     ds_heatdiv = xr.open_dataset(heatdiv_fname)
-
-    da_heatdiv = xr.DataArray(ds_heatdiv['AC_TEDIV'].values, dims=('month', 'lat', 'lon'),
-                              coords={'month': ds_heatdiv['time'].values, 'lat': ds_heatdiv['lat'].values,
-                                      'lon': ds_heatdiv['lon'].values})
+    da_heatdiv = xr.DataArray(ds_heatdiv['ZM_TEDIV'].values, dims=('time', 'lat'),
+                              coords={'time': sw_net['time'].values, 'lat': ds_heatdiv['lat'].values})
     da_heatdiv = da_heatdiv.sortby('lat')
-    da_heatdiv = da_heatdiv.interp({'lat': lat1x1, 'lon': lon1x1})
-    da_heatdiv = change_lon_180(da_heatdiv)
 
     if 'div' in forcing:
-        all_heating = sw_down - da_heatdiv
+        all_heating = sw_net - da_heatdiv
     else:
-        all_heating = sw_down
+        all_heating = sw_net
 
-    # only consider latitudinal variations in forcing
-    ds_1yr_F, _ = calc_amp_phase(all_heating.mean('lon'))
+    years = all_heating['time.year'].values
+    unique_years = np.unique(years)
+    # resample years to get uncertainty in seasonal cycle
+    ds_1yr_F_boot = []
+    for kk in range(nboot):
+        boot_years = np.random.choice(unique_years, len(unique_years))
+        new_idx = [np.where(years == by)[0] for by in boot_years]
+        new_idx = np.array(new_idx).flatten()
+        da_boot = all_heating.isel(time=new_idx).groupby('time.month').mean()
+
+        ds_1yr_F, _ = calc_amp_phase(da_boot)
+        tmp = ds_1yr_F['phi'].values
+        tmp[tmp < 0] += 365
+        ds_1yr_F['phi'].values = tmp
+        ds_1yr_F_boot.append(ds_1yr_F)
+
+    ds_1yr_F_boot = xr.concat(ds_1yr_F_boot, dim='sample')
 
     if return_components & ('div' in forcing):
-        return ds_1yr_F, sw_down, da_heatdiv
+        return ds_1yr_F_boot, sw_net, da_heatdiv
     elif return_components & ('div' not in forcing):
-        return ds_1yr_F, sw_down
+        return ds_1yr_F_boot, sw_net
     else:
-        return ds_1yr_F
+        return ds_1yr_F_boot
 
 
 def predict_with_ebm(da_gain, da_lag, da_gain_ebm, da_lag_ebm, da_trend_ebm, dataname, forcing, savedir):
