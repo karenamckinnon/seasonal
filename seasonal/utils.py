@@ -483,7 +483,7 @@ def calc_load_SMILE_seasonal_cycle(models, seasonal_years, nboot, savedir):
     ds_seasonal = []
     for m in models:
 
-        savename = '%s/%s_seasonal_cycle_%s.nc' % (savedir, m, varname)
+        savename = '%s/%s_seasonal_cycle_%s_%03i-samples.nc' % (savedir, m, varname, nboot)
         files = sorted(glob('%s/%s/%s/%s/*historical_rcp85*nc' % (smile_dir, m, freq, varname)))
 
         if os.path.isfile(savename):
