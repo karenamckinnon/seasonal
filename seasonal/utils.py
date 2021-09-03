@@ -5,6 +5,8 @@ import os
 import xarray as xr
 import pandas as pd
 from glob import glob
+import geopandas
+from helpful_utilities import ncutils
 
 
 smile_dir = '/gpfs/fs1/collections/cdg/data/CLIVAR_LE'
@@ -606,8 +608,14 @@ def calc_load_SMILE_trends(models, trend_years, this_season, savedir):
 def do_mask(da):
     """Mask out Greenland and ocean, and remove south of 30N for 1x1 data"""
 
-    is_greenland = (da.lat > 60) & (da.lon > 300)
-    this_mask = is_land & ~is_greenland
+    countries = geopandas.read_file('/glade/work/mckinnon/seasonal/geom/ne_110m_admin_0_countries/')
+    greenland = countries.query("ADMIN == 'Greenland'").reset_index(drop=True)
+    ds = xr.Dataset(coords={'lon': np.linspace(-179.5, 180, 1000), 'lat': np.linspace(-90, 90, 1000)})
+    da_greenland = ncutils.rasterize(greenland['geometry'], ds.coords)
+    da_greenland = ncutils.lon_to_360(da_greenland)
+    da_greenland = da_greenland.fillna(0)
+    da_greenland = da_greenland.interp({'lat': lat1x1, 'lon': lon1x1})
+    this_mask = is_land & ~(da_greenland > 0)
     da = da.where(this_mask == 1)
     da = da.sel({'lat': slice(30, 90)})
 
