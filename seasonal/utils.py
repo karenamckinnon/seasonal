@@ -511,7 +511,7 @@ def calc_load_SMILE_seasonal_cycle(models, seasonal_years, nboot, savedir, varna
             da_seasonal = da.copy().sel({'time': (da['time.year'] >= seasonal_years[0]) &
                                                  (da['time.year'] <= seasonal_years[1])})
 
-            da_seasonal = do_mask(da_seasonal)
+            # da_seasonal = do_mask(da_seasonal)
             years = da_seasonal['time.year'].values
             unique_years = np.unique(years)
             # resample years to get uncertainty in seasonal cycle
@@ -592,7 +592,7 @@ def calc_load_SMILE_trends(models, trend_years, this_season, savedir):
                 da = gv.xr_add_cyclic_longitudes(da, 'lon')
                 da = da.interp({'lat': lat1x1, 'lon': lon1x1})
                 # mask out ocean, greenland, and remove south of 30N
-                da = do_mask(da)
+                # da = do_mask(da)
 
                 this_trend.append(calc_trend_season(da, trend_years, this_season))
 
