@@ -826,3 +826,55 @@ def predict_with_ebm(da_gain, da_lag, da_gain_ebm, da_lag_ebm, da_trend_ebm, dat
         da_mix_inferred.to_netcdf(savename_mix)
 
     return da_T_pred, da_lam_inferred, da_mix_inferred
+
+
+def get_SMILE_forcing(models, savedir, nboot):
+    """Get SW forcing from SMILEs. Not all models have saved output; fill in with EM for other models."""
+
+    savename_amp_phase = '%s/sw_net_amp_phase_SMILEs.nc' % savedir
+    savename_sw_ts = '%s/sw_net_ts_SMILEs.nc' % savedir
+
+    if os.path.isfile(savename_amp_phase) & os.path.isfile(savename_sw_ts):
+        ds_seasonal_F_SMILES = xr.open_dataset(savename_amp_phase)
+        sw_net_ts_SMILES = xr.open_dataarray(savename_sw_ts)
+    else:
+
+        missing_models = []
+        ds_seasonal_F_SMILES = []
+        sw_net_ts_SMILES = []
+        for m in models:
+            out = get_heating(m, nboot, return_components=True)
+            if (type(out) == int):
+                missing_models.append(m)
+            else:
+                ds_seasonal_F_SMILES.append(out[0])
+                sw_net_ts_SMILES.append(out[1])
+
+        ds_seasonal_F_SMILES = xr.concat(ds_seasonal_F_SMILES, dim='model')
+        sw_net_ts_SMILES = xr.concat(sw_net_ts_SMILES, dim='model')
+
+        ds_seasonal_F_SMILES['model'] = np.array(models)[~np.isin(models, missing_models)]
+        sw_net_ts_SMILES['model'] = np.array(models)[~np.isin(models, missing_models)]
+
+        EM_F = ds_seasonal_F_SMILES.mean('model')
+        EM_SW = sw_net_ts_SMILES.mean('model')
+
+        ds_EM = []
+        sw_net_ts_EM = []
+        for m in missing_models:
+            ds_EM.append(EM_F)
+            sw_net_ts_EM.append(EM_SW)
+
+        ds_EM = xr.concat(ds_EM, dim='model')
+        ds_EM['model'] = missing_models
+
+        sw_net_ts_EM = xr.concat(sw_net_ts_EM, dim='model')
+        sw_net_ts_EM['model'] = missing_models
+
+        ds_seasonal_F_SMILES = xr.concat((ds_seasonal_F_SMILES, ds_EM), dim='model')
+        sw_net_ts_SMILES = xr.concat((sw_net_ts_SMILES, sw_net_ts_EM), dim='model')
+
+        ds_seasonal_F_SMILES.to_netcdf(savename_amp_phase)
+        sw_net_ts_SMILES.to_netcdf(savename_sw_ts)
+
+    return ds_seasonal_F_SMILES, sw_net_ts_SMILES
