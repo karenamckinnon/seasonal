@@ -8,6 +8,7 @@ from glob import glob
 import geopandas
 from helpful_utilities import ncutils
 import geocat.viz as gv
+from scipy.ndimage.morphology import binary_dilation
 
 
 smile_dir = '/gpfs/fs1/collections/cdg/data/CLIVAR_LE'
@@ -619,7 +620,9 @@ def do_mask(da):
     da_greenland = ncutils.lon_to_360(da_greenland)
     da_greenland = da_greenland.fillna(0)
     da_greenland = da_greenland.interp({'lat': lat1x1, 'lon': lon1x1})
-    this_mask = is_land & ~(da_greenland > 0)
+    expanded_greenland = binary_dilation(binary_dilation((da_greenland > 0).values))  # regridded mask misses boundary
+    da_greenland = da_greenland.copy(data=expanded_greenland)
+    this_mask = is_land & ~(da_greenland)
     da = da.where(this_mask == 1)
     da = da.sel({'lat': slice(30, 90)})
 
