@@ -7,6 +7,7 @@ import pandas as pd
 from glob import glob
 import geopandas
 from helpful_utilities import ncutils
+import geocat.viz as gv
 
 
 smile_dir = '/gpfs/fs1/collections/cdg/data/CLIVAR_LE'
@@ -18,6 +19,7 @@ lon1x1 = np.arange(0.5, 360, 1)
 landfrac_name = 'sftlf'
 f_landfrac = sorted(glob('%s/%s/%s/%s/*.nc' % (smile_dir, 'cesm_lens', 'fx', landfrac_name)))
 da_landfrac = xr.open_dataset(f_landfrac[0])[landfrac_name]
+da_landfrac = gv.xr_add_cyclic_longitudes(da_landfrac, 'lon')
 da_landfrac = da_landfrac.interp({'lat': lat1x1, 'lon': lon1x1})
 is_land = da_landfrac > 50
 
@@ -458,7 +460,7 @@ def calc_trend_season(da, trend_years, this_season):
     return da_beta
 
 
-def calc_load_SMILE_seasonal_cycle(models, seasonal_years, nboot, savedir):
+def calc_load_SMILE_seasonal_cycle(models, seasonal_years, nboot, savedir, varname='tas'):
     """Calculate or load pre-calculated seasonal cycle in temperature, with bootstrapping, from each SMILE.
 
     Parameters
@@ -471,6 +473,8 @@ def calc_load_SMILE_seasonal_cycle(models, seasonal_years, nboot, savedir):
         How many bootstrap resamples to perform
     savedir : str
         Where to save the netcdfs with the seasonal cycle metrics
+    varname : str
+        CMOR-style variable name
 
     Returns
     -------
@@ -481,16 +485,16 @@ def calc_load_SMILE_seasonal_cycle(models, seasonal_years, nboot, savedir):
 
     # monthly temperature
     freq = 'Amon'
-    varname = 'tas'
     ds_seasonal = []
     for m in models:
 
         savename = '%s/%s_seasonal_cycle_%s_%03i-samples.nc' % (savedir, m, varname, nboot)
-        files = sorted(glob('%s/%s/%s/%s/*historical_rcp85*nc' % (smile_dir, m, freq, varname)))
 
         if os.path.isfile(savename):
             ds_1yr_T_boot = xr.open_dataset(savename)
         else:
+
+            files = sorted(glob('%s/%s/%s/%s/*historical_rcp85*nc' % (smile_dir, m, freq, varname)))
             f = files[0]  # using first member of each ensemble for seasonal cycle
 
             if m == 'ec_earth_lens':
@@ -501,7 +505,7 @@ def calc_load_SMILE_seasonal_cycle(models, seasonal_years, nboot, savedir):
                 ds = xr.open_dataset(f)
 
             da = ds[varname].load()
-
+            da = gv.xr_add_cyclic_longitudes(da, 'lon')
             da = da.interp({'lat': lat1x1, 'lon': lon1x1})
 
             da_seasonal = da.copy().sel({'time': (da['time.year'] >= seasonal_years[0]) &
@@ -585,7 +589,7 @@ def calc_load_SMILE_trends(models, trend_years, this_season, savedir):
                     ds = xr.open_dataset(f)
 
                 da = ds[varname].load()
-
+                da = gv.xr_add_cyclic_longitudes(da, 'lon')
                 da = da.interp({'lat': lat1x1, 'lon': lon1x1})
                 # mask out ocean, greenland, and remove south of 30N
                 da = do_mask(da)
@@ -631,7 +635,7 @@ def get_heating(forcing, nboot,
     Parameters
     ----------
     forcing : str
-        Type of forcing to use: 'ERA5_div', 'CERES_div', 'ERA5', 'CERES'
+        Type of forcing to use: 'ERA5_div', 'CERES_div', 'ERA5', 'CERES', CMIP model name
         ERA5: SW at the surface, CERES: SW at TOA
         div: to include heat flux divergence from ERA5 or not
     nboot : int
@@ -654,22 +658,51 @@ def get_heating(forcing, nboot,
 
     if 'CERES' in forcing:
         raise ValueError('CERES TOA not currently included')
+    elif 'ERA5' in forcing:
 
-    sw_net = xr.open_dataarray(era5_sw_fname)  # J/m2
-    sw_net /= constants.seconds_per_day  # monthly data, accumulation period is one day
+        sw_net = xr.open_dataarray(era5_sw_fname)  # J/m2
+        sw_net /= constants.seconds_per_day  # monthly data, accumulation period is one day
 
-    sw_net = sw_net.rename({'latitude': 'lat', 'longitude': 'lon'})
-    sw_net = sw_net.sortby('lat')
-    sw_net = sw_net.mean('lon')
+        sw_net = sw_net.rename({'latitude': 'lat', 'longitude': 'lon'})
+        sw_net = sw_net.sortby('lat')
+        sw_net = sw_net.mean('lon')
+
+    else:  # climate model based forcing
+        freq = 'Amon'
+        var1 = 'rsds'
+        var2 = 'rsus'
+        files1 = sorted(glob('%s/%s/%s/%s/*historical_rcp85*nc' % (smile_dir, forcing, freq, var1)))
+        files2 = sorted(glob('%s/%s/%s/%s/*historical_rcp85*nc' % (smile_dir, forcing, freq, var2)))
+
+        if (len(files1) == 0) | (len(files2) == 0):
+            return 0
+
+        f1 = files1[0]
+        f2 = files2[0]
+        if forcing == 'ec_earth_lens':
+            ds1 = xr.open_dataset(f1, decode_times=False)
+            new_time = pd.date_range(start='1860-01-01', periods=len(ds1.time), freq='M')
+            ds1 = ds1.assign_coords({'time': new_time})
+            ds2 = xr.open_dataset(f2, decode_times=False)
+            new_time = pd.date_range(start='1860-01-01', periods=len(ds2.time), freq='M')
+            ds2 = ds2.assign_coords({'time': new_time})
+        else:
+            ds1 = xr.open_dataset(f1)
+            ds2 = xr.open_dataset(f2)
+
+        da = ds1[var1].load() - ds2[var2].load()
+        da = da.rename('rsns')
+        sw_net = da.mean('lon')
+
     sw_net = sw_net.interp({'lat': lat1x1})
 
-    # Heat flux divergence
-    ds_heatdiv = xr.open_dataset(heatdiv_fname)
-    da_heatdiv = xr.DataArray(ds_heatdiv['ZM_TEDIV'].values, dims=('time', 'lat'),
-                              coords={'time': sw_net['time'].values, 'lat': ds_heatdiv['lat'].values})
-    da_heatdiv = da_heatdiv.sortby('lat')
-
     if 'div' in forcing:
+
+        # Heat flux divergence
+        ds_heatdiv = xr.open_dataset(heatdiv_fname)
+        da_heatdiv = xr.DataArray(ds_heatdiv['ZM_TEDIV'].values, dims=('time', 'lat'),
+                                  coords={'time': sw_net['time'].values, 'lat': ds_heatdiv['lat'].values})
+        da_heatdiv = da_heatdiv.sortby('lat')
         all_heating = sw_net - da_heatdiv
     else:
         all_heating = sw_net
