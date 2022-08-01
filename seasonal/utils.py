@@ -629,7 +629,7 @@ def do_mask(da):
     return da
 
 
-def get_heating(forcing, nboot,
+def get_heating(forcing, nboot, seasonal_years,
                 return_components=False, era5_sw_fname='/glade/work/mckinnon/ERA5/month/ssr/era5_ssr.nc',
                 heatdiv_fname='/glade/work/mckinnon/seasonal/data/ZonalMean-1979-2020-TEDIV-CSCALE-ERA5-LL90.nc',
                 ceres_sw_fname='/glade/work/mckinnon/CERES/CERES_EBAF-TOA_Ed4.1_Subset_CLIM01-CLIM12.nc'):
@@ -643,6 +643,8 @@ def get_heating(forcing, nboot,
         div: to include heat flux divergence from ERA5 or not
     nboot : int
         Number of times to bootstrap resample years
+    seasonal_years : tuple
+         The start and end year of the data to be used to calculate the seasonal cycle.
     return_components : bool
         Indicator of whether to also return the sw_down and div fields
     era5_sw_fname : str
@@ -693,12 +695,16 @@ def get_heating(forcing, nboot,
             ds1 = xr.open_dataset(f1)
             ds2 = xr.open_dataset(f2)
 
+        if (ds1.time.values != ds2.time.values).any():  # non-matching saved times, happens in MPI
+            return 0
         da = ds1[var1].load() - ds2[var2].load()
         da = da.rename('rsns')
         sw_net = da.mean('lon')
 
+    # interpolate to 1x1 and select only specified years for seasonal cycle
     sw_net = sw_net.interp({'lat': lat1x1})
-
+    sw_net = sw_net.sel({'time': (sw_net['time.year'] >= seasonal_years[0]) &
+                                 (sw_net['time.year'] <= seasonal_years[1])})
     if 'div' in forcing:
 
         # Heat flux divergence
@@ -831,7 +837,7 @@ def predict_with_ebm(da_gain, da_lag, da_gain_ebm, da_lag_ebm, da_trend_ebm, dat
     return da_T_pred, da_lam_inferred, da_mix_inferred
 
 
-def get_SMILE_forcing(models, savedir, nboot):
+def get_SMILE_forcing(models, savedir, nboot, seasonal_years):
     """Get SW forcing from SMILEs. Not all models have saved output; fill in with EM for other models."""
 
     savename_amp_phase = '%s/sw_net_amp_phase_SMILEs.nc' % savedir
@@ -846,16 +852,26 @@ def get_SMILE_forcing(models, savedir, nboot):
         ds_seasonal_F_SMILES = []
         sw_net_ts_SMILES = []
         for m in models:
-            out = get_heating(m, nboot, return_components=True)
+            out = get_heating(m, nboot, seasonal_years, return_components=True)
             if (type(out) == int):
                 missing_models.append(m)
             else:
                 ds_seasonal_F_SMILES.append(out[0])
-                sw_net_ts_SMILES.append(out[1])
+                # make sure all times match for sw_net
+                # can have issue where different models use different day/time timestamps for the same
+                # monthly average
+                this_sw = out[1]
+                start_year = this_sw['time.year'][0]
+                start_month = this_sw['time.month'][0]
+                new_time = pd.date_range(start='%04i-%02i-01' % (start_year, start_month),
+                                         periods=len(this_sw.time), freq='M')
+                this_sw = this_sw.assign_coords({'time': new_time})
+                sw_net_ts_SMILES.append(this_sw)
 
+        print('Models w/o SW up and SW down in MMLEA:')
+        print(missing_models)
         ds_seasonal_F_SMILES = xr.concat(ds_seasonal_F_SMILES, dim='model')
         sw_net_ts_SMILES = xr.concat(sw_net_ts_SMILES, dim='model')
-
         ds_seasonal_F_SMILES['model'] = np.array(models)[~np.isin(models, missing_models)]
         sw_net_ts_SMILES['model'] = np.array(models)[~np.isin(models, missing_models)]
 
