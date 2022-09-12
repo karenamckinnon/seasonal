@@ -611,7 +611,7 @@ def calc_load_SMILE_trends(models, trend_years, this_season, savedir):
 
 
 def do_mask(da):
-    """Mask out Greenland and ocean, and remove south of 30N for 1x1 data"""
+    """Mask out Greenland and ocean, and remove south of 30N and north of 80N for 1x1 data"""
 
     countries = geopandas.read_file('/glade/work/mckinnon/seasonal/geom/ne_110m_admin_0_countries/')
     greenland = countries.query("ADMIN == 'Greenland'").reset_index(drop=True)
@@ -624,7 +624,7 @@ def do_mask(da):
     da_greenland = da_greenland.copy(data=expanded_greenland)
     this_mask = is_land & ~(da_greenland)
     da = da.where(this_mask == 1)
-    da = da.sel({'lat': slice(30, 90)})
+    da = da.sel({'lat': slice(30, 80)})
 
     return da
 
