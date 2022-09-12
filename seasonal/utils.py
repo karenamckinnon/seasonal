@@ -382,15 +382,17 @@ def calc_amp_phase(da):
     basis = np.exp(2*np.pi*1j*t_basis)
 
     # Project data onto basis
-    data = da.copy().values
-    mu = np.mean(data, axis=0)
-    data -= mu[np.newaxis, ...]
+    data = da.copy()
+    # make sure month is first dimension
+    data = data.transpose('month', ...)
+    vals = data.values
+    mu = np.mean(vals, axis=0)
+    vals -= mu[np.newaxis, ...]
 
     if len(da.shape) == 3:
-        coeff = 2/nt*(np.sum(basis[..., np.newaxis, np.newaxis]*da.transpose('month', ...).values,
-                             axis=0))
+        coeff = 2/nt*(np.sum(basis[..., np.newaxis, np.newaxis]*vals, axis=0))
     elif len(da.shape) == 2:  # only latitude
-        coeff = 2/nt*(np.sum(basis[..., np.newaxis]*da.transpose('month', ...).values, axis=0))
+        coeff = 2/nt*(np.sum(basis[..., np.newaxis]*vals, axis=0))
 
     amp_1yr = np.abs(coeff)
     phase_1yr = (np.angle(coeff))*365/(2*np.pi)
@@ -400,8 +402,8 @@ def calc_amp_phase(da):
     elif len(da.shape) == 2:  # only latitude
         rec = np.real(np.conj(coeff[np.newaxis, ...])*basis[..., np.newaxis])
 
-    da_rec = da.copy(data=rec)
-    rho = xr.corr(da_rec, da, dim='month')
+    da_rec = data.copy(data=rec)
+    rho = xr.corr(da_rec, data, dim='month')
 
     if len(da.shape) == 3:
         ds_1yr = xr.Dataset(data_vars={'A': (('lat', 'lon'), amp_1yr),
