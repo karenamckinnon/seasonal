@@ -1,4 +1,5 @@
 import numpy as np
+from scipy.spatial import distance_matrix
 from seasonal import constants
 from climlab.solar.insolation import daily_insolation
 import os
@@ -520,10 +521,13 @@ def calc_load_SMILE_seasonal_cycle(models, seasonal_years, nboot, savedir, varna
             # resample years to get uncertainty in seasonal cycle
             ds_1yr_T_boot = []
             for kk in range(nboot):
-                boot_years = np.random.choice(unique_years, len(unique_years))
-                new_idx = [np.where(years == by)[0] for by in boot_years]
-                new_idx = np.array(new_idx).flatten()
-                da_boot = da_seasonal.isel(time=new_idx).groupby('time.month').mean()
+                if kk == 0:
+                    da_boot = da_seasonal.groupby('time.month').mean()
+                else:
+                    boot_years = np.random.choice(unique_years, len(unique_years))
+                    new_idx = [np.where(years == by)[0] for by in boot_years]
+                    new_idx = np.array(new_idx).flatten()
+                    da_boot = da_seasonal.isel(time=new_idx).groupby('time.month').mean()
 
                 ds_1yr_T, _ = calc_amp_phase(da_boot)
                 tmp = ds_1yr_T['phi'].values
@@ -723,10 +727,13 @@ def get_heating(forcing, nboot, seasonal_years,
     # resample years to get uncertainty in seasonal cycle
     ds_1yr_F_boot = []
     for kk in range(nboot):
-        boot_years = np.random.choice(unique_years, len(unique_years))
-        new_idx = [np.where(years == by)[0] for by in boot_years]
-        new_idx = np.array(new_idx).flatten()
-        da_boot = all_heating.isel(time=new_idx).groupby('time.month').mean()
+        if kk == 0:
+            da_boot = all_heating.groupby('time.month').mean()
+        else:
+            boot_years = np.random.choice(unique_years, len(unique_years))
+            new_idx = [np.where(years == by)[0] for by in boot_years]
+            new_idx = np.array(new_idx).flatten()
+            da_boot = all_heating.isel(time=new_idx).groupby('time.month').mean()
 
         ds_1yr_F, _ = calc_amp_phase(da_boot)
         tmp = ds_1yr_F['phi'].values
@@ -779,62 +786,54 @@ def predict_with_ebm(da_gain, da_lag, da_gain_ebm, da_lag_ebm, da_trend_ebm, dat
     savename_lam = '%s/ebm_inferred_lam_%s_F-%s.nc' % (savedir, dataname, forcing)
     savename_mix = '%s/ebm_inferred_mix_%s_F-%s.nc' % (savedir, dataname, forcing)
 
-    if os.path.isfile(savename) & os.path.isfile(savename_lam) & os.path.isfile(savename_mix):
+    # KAM TMP TMP TMP
+    if 0:  # os.path.isfile(savename) & os.path.isfile(savename_lam) & os.path.isfile(savename_mix):
         da_T_pred = xr.open_dataarray(savename)
         da_lam_inferred = xr.open_dataarray(savename_lam)
         da_mix_inferred = xr.open_dataarray(savename_mix)
     else:
-        da_T_pred = []
-        da_lam_inferred = []
-        da_mix_inferred = []
-        for this_lat in da_gain.lat:
-            if this_lat < 30:  # only do predictions in the NH extratropics
-                continue
-            this_gain = da_gain.sel({'lat': this_lat})
-            this_lag = da_lag.sel({'lat': this_lat})
 
-            # At every gridbox, find the closest gain and lag from the EBM.
-            T_pred = []
-            lam_value = []
-            mixing_value = []
-            for this_lon in this_gain.lon:
+        nlat = len(da_gain.lat)
+        nlon = len(da_gain.lon)
+        nx = nlat*nlon
 
-                if np.isnan(this_lag.sel({'lon': this_lon}).values):  # over ocean
-                    T_pred.append(np.nan)
-                    lam_value.append(np.nan)
-                    mixing_value.append(np.nan)
-                else:
-                    delta_gain = da_gain_ebm - this_gain.sel({'lon': this_lon}).values
-                    delta_lag = da_lag_ebm - this_lag.sel({'lon': this_lon}).values
+        d1 = np.vstack((da_gain.values.flatten(), da_lag.values.flatten())).T
+        has_data = ~np.isnan(d1[:, 0])
+        d1 = d1[has_data, :]
 
-                    # normalize for fair comparison in "distance"
-                    delta_gain = delta_gain/this_gain.std('lon')
-                    delta_lag = delta_lag/this_lag.std('lon')
+        d2 = np.vstack((da_gain_ebm.values.flatten(), da_lag_ebm.values.flatten())).T
 
-                    d = np.sqrt(delta_gain**2 + delta_lag**2)
-                    idx_match = np.where(d == d.min())
-                    T_pred.append(da_trend_ebm[idx_match].values.flatten()[0])
+        norm1 = np.std(d1[:, 0])
+        norm2 = np.std(d1[:, 1])
+        d1[:, 0] /= norm1
+        d1[:, 1] /= norm2
+        d2[:, 0] /= norm1
+        d2[:, 1] /= norm2
 
-                    # also find matching value of m, lambda
-                    lam_value.append(da_trend_ebm[idx_match].coords['lambda'].values[0])
-                    mixing_value.append(da_trend_ebm[idx_match].coords['mixing'].values[0])
+        d = distance_matrix(d1, d2)
 
-            da_T_pred.append(xr.DataArray(np.array(T_pred), dims=('lon'), coords={'lon': this_gain.lon}))
-            da_lam_inferred.append(xr.DataArray(np.array(lam_value), dims=('lon'), coords={'lon': this_gain.lon}))
-            da_mix_inferred.append(xr.DataArray(np.array(mixing_value), dims=('lon'), coords={'lon': this_gain.lon}))
+        min_loc = np.argmin(d, axis=-1)
 
-        da_T_pred = xr.concat(da_T_pred, dim='lat')
-        da_T_pred['lat'] = da_gain.lat[da_gain.lat >= 30]
+        T_pred = da_trend_ebm.values.flatten()[min_loc]
 
-        da_lam_inferred = xr.concat(da_lam_inferred, dim='lat')
-        da_lam_inferred['lat'] = da_gain.lat[da_gain.lat >= 30]
+        mix_mat, lam_mat = np.meshgrid(da_trend_ebm['mixing'], da_trend_ebm['lambda'])
+        lam_value = lam_mat.flatten()[min_loc]
+        mixing_value = mix_mat.flatten()[min_loc]
 
-        da_mix_inferred = xr.concat(da_mix_inferred, dim='lat')
-        da_mix_inferred['lat'] = da_gain.lat[da_gain.lat >= 30]
+        da_T_pred = np.nan*np.ones((nx, ))
+        da_T_pred[has_data] = T_pred
+        da_T_pred = da_T_pred.reshape((nlat, nlon))
+        da_T_pred = da_gain.copy(data=da_T_pred)
 
-        da_T_pred.to_netcdf(savename)
-        da_lam_inferred.to_netcdf(savename_lam)
-        da_mix_inferred.to_netcdf(savename_mix)
+        da_lam_inferred = np.nan*np.ones((nx, ))
+        da_lam_inferred[has_data] = lam_value
+        da_lam_inferred = da_lam_inferred.reshape((nlat, nlon))
+        da_lam_inferred = da_gain.copy(data=da_lam_inferred)
+
+        da_mix_inferred = np.nan*np.ones((nx, ))
+        da_mix_inferred[has_data] = mixing_value
+        da_mix_inferred = da_mix_inferred.reshape((nlat, nlon))
+        da_mix_inferred = da_gain.copy(data=da_mix_inferred)
 
     return da_T_pred, da_lam_inferred, da_mix_inferred
 
@@ -842,8 +841,8 @@ def predict_with_ebm(da_gain, da_lag, da_gain_ebm, da_lag_ebm, da_trend_ebm, dat
 def get_SMILE_forcing(models, savedir, nboot, seasonal_years):
     """Get SW forcing from SMILEs. Not all models have saved output; fill in with EM for other models."""
 
-    savename_amp_phase = '%s/sw_net_amp_phase_SMILEs.nc' % savedir
-    savename_sw_ts = '%s/sw_net_ts_SMILEs.nc' % savedir
+    savename_amp_phase = '%s/sw_net_amp_phase_SMILEs_%i-samples.nc' % (savedir, nboot)
+    savename_sw_ts = '%s/sw_net_ts_SMILEs_%i-samples.nc' % (savedir, nboot)
 
     if os.path.isfile(savename_amp_phase) & os.path.isfile(savename_sw_ts):
         ds_seasonal_F_SMILES = xr.open_dataset(savename_amp_phase)
