@@ -786,8 +786,7 @@ def predict_with_ebm(da_gain, da_lag, da_gain_ebm, da_lag_ebm, da_trend_ebm, dat
     savename_lam = '%s/ebm_inferred_lam_%s_F-%s.nc' % (savedir, dataname, forcing)
     savename_mix = '%s/ebm_inferred_mix_%s_F-%s.nc' % (savedir, dataname, forcing)
 
-    # KAM TMP TMP TMP
-    if 0:  # os.path.isfile(savename) & os.path.isfile(savename_lam) & os.path.isfile(savename_mix):
+    if os.path.isfile(savename) & os.path.isfile(savename_lam) & os.path.isfile(savename_mix):
         da_T_pred = xr.open_dataarray(savename)
         da_lam_inferred = xr.open_dataarray(savename_lam)
         da_mix_inferred = xr.open_dataarray(savename_mix)
