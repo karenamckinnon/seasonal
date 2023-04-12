@@ -464,7 +464,7 @@ def calc_trend_season(da, trend_years, this_season):
     return da_beta
 
 
-def calc_load_SMILE_seasonal_cycle(models, seasonal_years, nboot, savedir, varname='tas'):
+def calc_load_SMILE_seasonal_cycle(models, seasonal_years, nboot, savedir, varname='tas', member_number=0):
     """Calculate or load pre-calculated seasonal cycle in temperature, with bootstrapping, from each SMILE.
 
     Parameters
@@ -474,11 +474,13 @@ def calc_load_SMILE_seasonal_cycle(models, seasonal_years, nboot, savedir, varna
     seasonal_years : tuple
         The start and end year of the data to be used to calculate the seasonal cycle
     nboot : int
-        How many bootstrap resamples to perform
+        How many bootstrap resamples to perform. If 1, do not perform bootstrapping
     savedir : str
         Where to save the netcdfs with the seasonal cycle metrics
     varname : str
         CMOR-style variable name
+    member_number : int
+        Which member to calculate seasonal cycle using
 
     Returns
     -------
@@ -492,14 +494,14 @@ def calc_load_SMILE_seasonal_cycle(models, seasonal_years, nboot, savedir, varna
     ds_seasonal = []
     for m in models:
 
-        savename = '%s/%s_seasonal_cycle_%s_%03i-samples.nc' % (savedir, m, varname, nboot)
+        savename = '%s/%s_seasonal_cycle_%s_%03i-samples_member-%02i.nc' % (savedir, m, varname, nboot, member_number)
 
         if os.path.isfile(savename):
             ds_1yr_T_boot = xr.open_dataset(savename)
         else:
 
             files = sorted(glob('%s/%s/%s/%s/*historical_rcp85*nc' % (smile_dir, m, freq, varname)))
-            f = files[0]  # using first member of each ensemble for seasonal cycle
+            f = files[member_number]
 
             if m == 'ec_earth_lens':
                 ds = xr.open_dataset(f, decode_times=False)
@@ -515,10 +517,10 @@ def calc_load_SMILE_seasonal_cycle(models, seasonal_years, nboot, savedir, varna
             da_seasonal = da.copy().sel({'time': (da['time.year'] >= seasonal_years[0]) &
                                                  (da['time.year'] <= seasonal_years[1])})
 
-            # da_seasonal = do_mask(da_seasonal)
             years = da_seasonal['time.year'].values
             unique_years = np.unique(years)
-            # resample years to get uncertainty in seasonal cycle
+
+            # if nboot > 1, resample years to get uncertainty in seasonal cycle
             ds_1yr_T_boot = []
             for kk in range(nboot):
                 if kk == 0:
