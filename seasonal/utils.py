@@ -464,13 +464,13 @@ def calc_trend_season(da, trend_years, this_season):
     return da_beta
 
 
-def calc_load_SMILE_seasonal_cycle(models, seasonal_years, nboot, savedir, varname='tas', member_number=0):
+def calc_load_SMILE_seasonal_cycle(m, seasonal_years, nboot, savedir, varname='tas', member_number=0):
     """Calculate or load pre-calculated seasonal cycle in temperature, with bootstrapping, from each SMILE.
 
     Parameters
     ----------
-    models : list
-        Names (matching paths) of each SMILE
+    m : str
+        Name (matching paths) of the SMILE
     seasonal_years : tuple
         The start and end year of the data to be used to calculate the seasonal cycle
     nboot : int
@@ -491,61 +491,55 @@ def calc_load_SMILE_seasonal_cycle(models, seasonal_years, nboot, savedir, varna
 
     # monthly temperature
     freq = 'Amon'
-    ds_seasonal = []
-    for m in models:
 
-        savename = '%s/%s_seasonal_cycle_%s_%03i-samples_member-%02i.nc' % (savedir, m, varname, nboot, member_number)
+    savename = '%s/%s_seasonal_cycle_%s_%03i-samples_member-%02i.nc' % (savedir, m, varname, nboot, member_number)
 
-        if os.path.isfile(savename):
-            ds_1yr_T_boot = xr.open_dataset(savename)
+    if os.path.isfile(savename):
+        ds_1yr_T_boot = xr.open_dataset(savename)
+    else:
+
+        files = sorted(glob('%s/%s/%s/%s/*historical_rcp85*nc' % (smile_dir, m, freq, varname)))
+        f = files[member_number]
+
+        if m == 'ec_earth_lens':
+            ds = xr.open_dataset(f, decode_times=False)
+            new_time = pd.date_range(start='1860-01-01', periods=len(ds.time), freq='M')
+            ds = ds.assign_coords({'time': new_time})
         else:
+            ds = xr.open_dataset(f)
 
-            files = sorted(glob('%s/%s/%s/%s/*historical_rcp85*nc' % (smile_dir, m, freq, varname)))
-            f = files[member_number]
+        da = ds[varname].load()
+        da = gv.xr_add_cyclic_longitudes(da, 'lon')
+        da = da.interp({'lat': lat1x1, 'lon': lon1x1})
 
-            if m == 'ec_earth_lens':
-                ds = xr.open_dataset(f, decode_times=False)
-                new_time = pd.date_range(start='1860-01-01', periods=len(ds.time), freq='M')
-                ds = ds.assign_coords({'time': new_time})
+        da_seasonal = da.copy().sel({'time': (da['time.year'] >= seasonal_years[0]) &
+                                             (da['time.year'] <= seasonal_years[1])})
+
+        years = da_seasonal['time.year'].values
+        unique_years = np.unique(years)
+
+        # if nboot > 1, resample years to get uncertainty in seasonal cycle
+        ds_1yr_T_boot = []
+        for kk in range(nboot):
+            if kk == 0:
+                da_boot = da_seasonal.groupby('time.month').mean()
             else:
-                ds = xr.open_dataset(f)
+                boot_years = np.random.choice(unique_years, len(unique_years))
+                new_idx = [np.where(years == by)[0] for by in boot_years]
+                new_idx = np.array(new_idx).flatten()
+                da_boot = da_seasonal.isel(time=new_idx).groupby('time.month').mean()
 
-            da = ds[varname].load()
-            da = gv.xr_add_cyclic_longitudes(da, 'lon')
-            da = da.interp({'lat': lat1x1, 'lon': lon1x1})
+            ds_1yr_T, _ = calc_amp_phase(da_boot)
+            tmp = ds_1yr_T['phi'].values
+            tmp[tmp < 0] += 365
+            ds_1yr_T['phi'].values = tmp
+            ds_1yr_T_boot.append(ds_1yr_T)
 
-            da_seasonal = da.copy().sel({'time': (da['time.year'] >= seasonal_years[0]) &
-                                                 (da['time.year'] <= seasonal_years[1])})
+        ds_1yr_T_boot = xr.concat(ds_1yr_T_boot, dim='sample')
+        ds_1yr_T_boot.attrs = {'sc_years': seasonal_years}
+        ds_1yr_T_boot.to_netcdf(savename)
 
-            years = da_seasonal['time.year'].values
-            unique_years = np.unique(years)
-
-            # if nboot > 1, resample years to get uncertainty in seasonal cycle
-            ds_1yr_T_boot = []
-            for kk in range(nboot):
-                if kk == 0:
-                    da_boot = da_seasonal.groupby('time.month').mean()
-                else:
-                    boot_years = np.random.choice(unique_years, len(unique_years))
-                    new_idx = [np.where(years == by)[0] for by in boot_years]
-                    new_idx = np.array(new_idx).flatten()
-                    da_boot = da_seasonal.isel(time=new_idx).groupby('time.month').mean()
-
-                ds_1yr_T, _ = calc_amp_phase(da_boot)
-                tmp = ds_1yr_T['phi'].values
-                tmp[tmp < 0] += 365
-                ds_1yr_T['phi'].values = tmp
-                ds_1yr_T_boot.append(ds_1yr_T)
-
-            ds_1yr_T_boot = xr.concat(ds_1yr_T_boot, dim='sample')
-            ds_1yr_T_boot.attrs = {'sc_years': seasonal_years}
-            ds_1yr_T_boot.to_netcdf(savename)
-        ds_seasonal.append(ds_1yr_T_boot)
-
-    ds_seasonal = xr.concat(ds_seasonal, dim='model', coords='minimal')
-    ds_seasonal = ds_seasonal.assign_coords({'model': list(models)})
-
-    return ds_seasonal
+    return ds_1yr_T_boot
 
 
 def calc_load_SMILE_trends(models, trend_years, this_season, savedir):
@@ -618,7 +612,7 @@ def calc_load_SMILE_trends(models, trend_years, this_season, savedir):
     return da_trend
 
 
-def do_mask(da):
+def do_mask(da, lower_lat=30, upper_lat=80):
     """Mask out Greenland and ocean, and remove south of 30N and north of 80N for 1x1 data"""
 
     countries = geopandas.read_file('/glade/work/mckinnon/seasonal/geom/ne_110m_admin_0_countries/')
@@ -632,7 +626,7 @@ def do_mask(da):
     da_greenland = da_greenland.copy(data=expanded_greenland)
     this_mask = is_land & ~(da_greenland)
     da = da.where(this_mask == 1)
-    da = da.sel({'lat': slice(30, 80)})
+    da = da.sel({'lat': slice(lower_lat, upper_lat)})
 
     return da
 
