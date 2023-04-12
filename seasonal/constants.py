@@ -10,7 +10,7 @@ gamma = 0.74
 lam_ocean = 1.13  # W/m2/K
 
 # inferred from standard parameters for soil / standard diffusivity model
-C_land = 0.75*mwe
+C_land = 0.5*mwe
 seconds_per_day = 60*60*24
 days_per_year = 365.25
 omega = 2*np.pi/(days_per_year*seconds_per_day)

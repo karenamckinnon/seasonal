@@ -751,7 +751,7 @@ def get_heating(forcing, nboot, seasonal_years,
         return ds_1yr_F_boot
 
 
-def predict_with_ebm(da_gain, da_lag, da_gain_ebm, da_lag_ebm, da_trend_ebm, dataname, forcing, savedir):
+def predict_with_ebm(da_gain, da_lag, da_gain_ebm, da_lag_ebm, da_trend_ebm):
     """Use gain and lag from obs or model + EBM prediction to map from seasonal cycle to temperature trends.
 
     Parameters
@@ -766,8 +766,6 @@ def predict_with_ebm(da_gain, da_lag, da_gain_ebm, da_lag_ebm, da_trend_ebm, dat
         Lag in EBM
     da_trend_ebm : xr.DataArray
         Temperature trend in EBM. Will be a function of the forcing and trend years, specified earlier.
-    dataname : str
-        Name of data or model for the seasonal cycle
     forcing : str
         Type of heating for seasonal cycle: 'ERA5_div', 'CERES_div', 'ERA5', 'CERES'
         ERA5: SW at the surface, CERES: SW at TOA
@@ -782,57 +780,47 @@ def predict_with_ebm(da_gain, da_lag, da_gain_ebm, da_lag_ebm, da_trend_ebm, dat
 
     """
 
-    savename = '%s/ebm_predicted_T_trend_%s_F-%s.nc' % (savedir, dataname, forcing)
-    savename_lam = '%s/ebm_inferred_lam_%s_F-%s.nc' % (savedir, dataname, forcing)
-    savename_mix = '%s/ebm_inferred_mix_%s_F-%s.nc' % (savedir, dataname, forcing)
+    nlat = len(da_gain.lat)
+    nlon = len(da_gain.lon)
+    nx = nlat*nlon
 
-    if os.path.isfile(savename) & os.path.isfile(savename_lam) & os.path.isfile(savename_mix):
-        da_T_pred = xr.open_dataarray(savename)
-        da_lam_inferred = xr.open_dataarray(savename_lam)
-        da_mix_inferred = xr.open_dataarray(savename_mix)
-    else:
+    d1 = np.vstack((da_gain.values.flatten(), da_lag.values.flatten())).T
+    has_data = ~np.isnan(d1[:, 0])
+    d1 = d1[has_data, :]
 
-        nlat = len(da_gain.lat)
-        nlon = len(da_gain.lon)
-        nx = nlat*nlon
+    d2 = np.vstack((da_gain_ebm.values.flatten(), da_lag_ebm.values.flatten())).T
 
-        d1 = np.vstack((da_gain.values.flatten(), da_lag.values.flatten())).T
-        has_data = ~np.isnan(d1[:, 0])
-        d1 = d1[has_data, :]
+    norm1 = np.std(d1[:, 0])
+    norm2 = np.std(d1[:, 1])
+    d1[:, 0] /= norm1
+    d1[:, 1] /= norm2
+    d2[:, 0] /= norm1
+    d2[:, 1] /= norm2
 
-        d2 = np.vstack((da_gain_ebm.values.flatten(), da_lag_ebm.values.flatten())).T
+    d = distance_matrix(d1, d2)
 
-        norm1 = np.std(d1[:, 0])
-        norm2 = np.std(d1[:, 1])
-        d1[:, 0] /= norm1
-        d1[:, 1] /= norm2
-        d2[:, 0] /= norm1
-        d2[:, 1] /= norm2
+    min_loc = np.argmin(d, axis=-1)
 
-        d = distance_matrix(d1, d2)
+    T_pred = da_trend_ebm.values.flatten()[min_loc]
 
-        min_loc = np.argmin(d, axis=-1)
+    mix_mat, lam_mat = np.meshgrid(da_trend_ebm['mixing'], da_trend_ebm['lambda'])
+    lam_value = lam_mat.flatten()[min_loc]
+    mixing_value = mix_mat.flatten()[min_loc]
 
-        T_pred = da_trend_ebm.values.flatten()[min_loc]
+    da_T_pred = np.nan*np.ones((nx, ))
+    da_T_pred[has_data] = T_pred
+    da_T_pred = da_T_pred.reshape((nlat, nlon))
+    da_T_pred = da_gain.copy(data=da_T_pred)
 
-        mix_mat, lam_mat = np.meshgrid(da_trend_ebm['mixing'], da_trend_ebm['lambda'])
-        lam_value = lam_mat.flatten()[min_loc]
-        mixing_value = mix_mat.flatten()[min_loc]
+    da_lam_inferred = np.nan*np.ones((nx, ))
+    da_lam_inferred[has_data] = lam_value
+    da_lam_inferred = da_lam_inferred.reshape((nlat, nlon))
+    da_lam_inferred = da_gain.copy(data=da_lam_inferred)
 
-        da_T_pred = np.nan*np.ones((nx, ))
-        da_T_pred[has_data] = T_pred
-        da_T_pred = da_T_pred.reshape((nlat, nlon))
-        da_T_pred = da_gain.copy(data=da_T_pred)
-
-        da_lam_inferred = np.nan*np.ones((nx, ))
-        da_lam_inferred[has_data] = lam_value
-        da_lam_inferred = da_lam_inferred.reshape((nlat, nlon))
-        da_lam_inferred = da_gain.copy(data=da_lam_inferred)
-
-        da_mix_inferred = np.nan*np.ones((nx, ))
-        da_mix_inferred[has_data] = mixing_value
-        da_mix_inferred = da_mix_inferred.reshape((nlat, nlon))
-        da_mix_inferred = da_gain.copy(data=da_mix_inferred)
+    da_mix_inferred = np.nan*np.ones((nx, ))
+    da_mix_inferred[has_data] = mixing_value
+    da_mix_inferred = da_mix_inferred.reshape((nlat, nlon))
+    da_mix_inferred = da_gain.copy(data=da_mix_inferred)
 
     return da_T_pred, da_lam_inferred, da_mix_inferred
 
