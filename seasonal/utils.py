@@ -21,7 +21,7 @@ lon1x1 = np.arange(0.5, 360, 1)
 landfrac_name = 'sftlf'
 f_landfrac = sorted(glob('%s/%s/%s/%s/*.nc' % (smile_dir, 'cesm_lens', 'fx', landfrac_name)))
 da_landfrac = xr.open_dataset(f_landfrac[0])[landfrac_name]
-da_landfrac = gv.xr_add_cyclic_longitudes(da_landfrac, 'lon')
+da_landfrac = gv.util.xr_add_cyclic_longitudes(da_landfrac, 'lon')
 da_landfrac = da_landfrac.interp({'lat': lat1x1, 'lon': lon1x1})
 is_land = da_landfrac > 50
 
@@ -509,7 +509,7 @@ def calc_load_SMILE_seasonal_cycle(m, seasonal_years, nboot, savedir, varname='t
             ds = xr.open_dataset(f)
 
         da = ds[varname].load()
-        da = gv.xr_add_cyclic_longitudes(da, 'lon')
+        da = gv.util.xr_add_cyclic_longitudes(da, 'lon')
         da = da.interp({'lat': lat1x1, 'lon': lon1x1})
 
         da_seasonal = da.copy().sel({'time': (da['time.year'] >= seasonal_years[0]) &
@@ -592,7 +592,7 @@ def calc_load_SMILE_trends(models, trend_years, this_season, savedir):
                     ds = xr.open_dataset(f)
 
                 da = ds[varname].load()
-                da = gv.xr_add_cyclic_longitudes(da, 'lon')
+                da = gv.util.xr_add_cyclic_longitudes(da, 'lon')
                 da = da.interp({'lat': lat1x1, 'lon': lon1x1})
                 # mask out ocean, greenland, and remove south of 30N
                 # da = do_mask(da)
