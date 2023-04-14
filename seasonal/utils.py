@@ -829,7 +829,7 @@ def predict_with_ebm(da_gain, da_lag, da_gain_ebm, da_lag_ebm, da_trend_ebm):
     return da_T_pred, da_lam_inferred, da_mix_inferred
 
 
-def get_SMILE_forcing(models, savedir, nboot, seasonal_years):
+def get_SMILE_forcing(models, savedir, nboot, seasonal_years, domask=False):
     """Get SW forcing from SMILEs. Not all models have saved output; fill in with EM for other models."""
 
     savename_amp_phase = '%s/sw_net_amp_phase_SMILEs_%i-samples.nc' % (savedir, nboot)
@@ -844,7 +844,7 @@ def get_SMILE_forcing(models, savedir, nboot, seasonal_years):
         ds_seasonal_F_SMILES = []
         sw_net_ts_SMILES = []
         for m in models:
-            out = get_heating(m, nboot, seasonal_years, return_components=True)
+            out = get_heating(m, nboot, seasonal_years, return_components=True, domask=domask)
             if (type(out) == int):
                 missing_models.append(m)
             else:
