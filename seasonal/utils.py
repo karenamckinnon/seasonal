@@ -631,7 +631,7 @@ def do_mask(da, lower_lat=30, upper_lat=80):
     return da
 
 
-def get_heating(forcing, nboot, seasonal_years,
+def get_heating(forcing, nboot, seasonal_years, domask=False,
                 return_components=False, era5_sw_fname='/glade/work/mckinnon/ERA5/month/ssr/era5_ssr.nc',
                 heatdiv_fname='/glade/work/mckinnon/seasonal/data/ZonalMean-1979-2020-TEDIV-CSCALE-ERA5-LL90.nc',
                 ceres_sw_fname='/glade/work/mckinnon/CERES/CERES_EBAF-TOA_Ed4.1_Subset_CLIM01-CLIM12.nc'):
@@ -647,6 +647,8 @@ def get_heating(forcing, nboot, seasonal_years,
         Number of times to bootstrap resample years
     seasonal_years : tuple
          The start and end year of the data to be used to calculate the seasonal cycle.
+    domask : bool
+        Indicator of whether to mask domain to land/no Greenland using utils.do_mask
     return_components : bool
         Indicator of whether to also return the sw_down and div fields
     era5_sw_fname : str
@@ -672,7 +674,6 @@ def get_heating(forcing, nboot, seasonal_years,
 
         sw_net = sw_net.rename({'latitude': 'lat', 'longitude': 'lon'})
         sw_net = sw_net.sortby('lat')
-        sw_net = sw_net.mean('lon')
 
     else:  # climate model based forcing
         freq = 'Amon'
@@ -700,11 +701,17 @@ def get_heating(forcing, nboot, seasonal_years,
         if (ds1.time.values != ds2.time.values).any():  # non-matching saved times, happens in MPI
             return 0
         da = ds1[var1].load() - ds2[var2].load()
-        da = da.rename('rsns')
-        sw_net = da.mean('lon')
+        sw_net = da.rename('rsns')
 
-    # interpolate to 1x1 and select only specified years for seasonal cycle
-    sw_net = sw_net.interp({'lat': lat1x1})
+    if domask:  # mask out ocean, Greenland
+        sw_net = gv.util.xr_add_cyclic_longitudes(sw_net, 'lon')
+        sw_net = sw_net.interp({'lat': lat1x1, 'lon': lon1x1})
+        sw_net = do_mask(sw_net)
+
+    # average along longitude
+    sw_net = sw_net.mean('lon')
+
+    # select only specified years for seasonal cycle
     sw_net = sw_net.sel({'time': (sw_net['time.year'] >= seasonal_years[0]) &
                                  (sw_net['time.year'] <= seasonal_years[1])})
     if 'div' in forcing:
@@ -714,6 +721,7 @@ def get_heating(forcing, nboot, seasonal_years,
         da_heatdiv = xr.DataArray(ds_heatdiv['ZM_TEDIV'].values, dims=('time', 'lat'),
                                   coords={'time': sw_net['time'].values, 'lat': ds_heatdiv['lat'].values})
         da_heatdiv = da_heatdiv.sortby('lat')
+        da_heatdiv = da_heatdiv.interp({'lat': lat1x1})
         all_heating = sw_net - da_heatdiv
     else:
         all_heating = sw_net
