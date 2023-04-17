@@ -10,6 +10,7 @@ import geopandas
 from helpful_utilities import ncutils
 import geocat.viz as gv
 from scipy.ndimage.morphology import binary_dilation
+from datetime import timedelta
 
 
 smile_dir = '/gpfs/fs1/collections/cdg/data/CLIVAR_LE'
@@ -679,33 +680,41 @@ def get_heating(forcing, nboot, seasonal_years, domask=False,
         freq = 'Amon'
         var1 = 'rsds'
         var2 = 'rsus'
-        files1 = sorted(glob('%s/%s/%s/%s/*historical_rcp85*nc' % (smile_dir, forcing, freq, var1)))
-        files2 = sorted(glob('%s/%s/%s/%s/*historical_rcp85*nc' % (smile_dir, forcing, freq, var2)))
 
-        if (len(files1) == 0) | (len(files2) == 0):
+        # three models do not have correct shortwave in MMLEA
+        # need to treat as special cases
+        rad_dir = '/glade/work/mckinnon/seasonal/new_rad'
+        if forcing == 'ec_earth_lens':  # sw forcing generally unavailable
             return 0
-
-        f1 = files1[0]
-        f2 = files2[0]
-        if forcing == 'ec_earth_lens':
-            ds1 = xr.open_dataset(f1, decode_times=False)
-            new_time = pd.date_range(start='1860-01-01', periods=len(ds1.time), freq='M')
-            ds1 = ds1.assign_coords({'time': new_time})
-            ds2 = xr.open_dataset(f2, decode_times=False)
-            new_time = pd.date_range(start='1860-01-01', periods=len(ds2.time), freq='M')
-            ds2 = ds2.assign_coords({'time': new_time})
+        elif forcing == 'cesm_lens':
+            cesm_var = 'FSNS'
+            files = sorted(glob('%s/*%s*.nc' % (rad_dir, cesm_var)))
+            ds = xr.open_mfdataset(files)
+            da = ds[cesm_var].load()
+            # shift by one day because of issue with CESM saved timestamps
+            da = da.assign_coords(time=da.time-timedelta(days=1))
         else:
+            if forcing == 'mpi_lens':
+                files1 = sorted(glob('%s/%s*.nc' % (rad_dir, var1)))
+                files2 = sorted(glob('%s/%s*.nc' % (rad_dir, var2)))
+            else:
+                files1 = sorted(glob('%s/%s/%s/%s/*historical_rcp85*nc' % (smile_dir, forcing, freq, var1)))
+                files2 = sorted(glob('%s/%s/%s/%s/*historical_rcp85*nc' % (smile_dir, forcing, freq, var2)))
+
+            f1 = files1[0]
+            f2 = files2[0]
             ds1 = xr.open_dataset(f1)
             ds2 = xr.open_dataset(f2)
 
-        if (ds1.time.values != ds2.time.values).any():  # non-matching saved times, happens in MPI
-            return 0
-        da = ds1[var1].load() - ds2[var2].load()
+            if (ds1.time.values != ds2.time.values).any():  # non-matching saved times
+                return 0
+            da = ds1[var1].load() - ds2[var2].load()
         sw_net = da.rename('rsns')
 
+    sw_net = gv.util.xr_add_cyclic_longitudes(sw_net, 'lon')
+    sw_net = sw_net.interp({'lat': lat1x1, 'lon': lon1x1})
+
     if domask:  # mask out ocean, Greenland
-        sw_net = gv.util.xr_add_cyclic_longitudes(sw_net, 'lon')
-        sw_net = sw_net.interp({'lat': lat1x1, 'lon': lon1x1})
         sw_net = do_mask(sw_net)
 
     # average along longitude
