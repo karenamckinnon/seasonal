@@ -632,7 +632,7 @@ def do_mask(da, lower_lat=30, upper_lat=80):
     return da
 
 
-def get_heating(forcing, nboot, seasonal_years, domask=False,
+def get_heating(forcing, nboot, seasonal_years, domask=False, lower_lat=30, upper_lat=80,
                 return_components=False, era5_sw_fname='/glade/work/mckinnon/ERA5/month/ssr/era5_ssr.nc',
                 heatdiv_fname='/glade/work/mckinnon/seasonal/data/ZonalMean-1979-2020-TEDIV-CSCALE-ERA5-LL90.nc',
                 ceres_sw_fname='/glade/work/mckinnon/CERES/CERES_EBAF-TOA_Ed4.1_Subset_CLIM01-CLIM12.nc'):
@@ -650,6 +650,10 @@ def get_heating(forcing, nboot, seasonal_years, domask=False,
          The start and end year of the data to be used to calculate the seasonal cycle.
     domask : bool
         Indicator of whether to mask domain to land/no Greenland using utils.do_mask
+    lower_lat : int or float
+        If masking, lower latitude to bound the masked area
+    upper_lat : int or float
+        If masking, upper latitude to bound the masked area
     return_components : bool
         Indicator of whether to also return the sw_down and div fields
     era5_sw_fname : str
@@ -715,7 +719,7 @@ def get_heating(forcing, nboot, seasonal_years, domask=False,
     sw_net = sw_net.interp({'lat': lat1x1, 'lon': lon1x1})
 
     if domask:  # mask out ocean, Greenland
-        sw_net = do_mask(sw_net)
+        sw_net = do_mask(sw_net, lower_lat=lower_lat, upper_lat=upper_lat)
 
     # average along longitude
     sw_net = sw_net.mean('lon')
@@ -838,7 +842,7 @@ def predict_with_ebm(da_gain, da_lag, da_gain_ebm, da_lag_ebm, da_trend_ebm):
     return da_T_pred, da_lam_inferred, da_mix_inferred
 
 
-def get_SMILE_forcing(models, savedir, nboot, seasonal_years, domask=False):
+def get_SMILE_forcing(models, savedir, nboot, seasonal_years, domask=False, lower_lat=30, upper_lat=80):
     """Get SW forcing from SMILEs. Not all models have saved output; fill in with EM for other models."""
 
     savename_amp_phase = '%s/sw_net_amp_phase_SMILEs_%i-samples.nc' % (savedir, nboot)
@@ -853,7 +857,8 @@ def get_SMILE_forcing(models, savedir, nboot, seasonal_years, domask=False):
         ds_seasonal_F_SMILES = []
         sw_net_ts_SMILES = []
         for m in models:
-            out = get_heating(m, nboot, seasonal_years, return_components=True, domask=domask)
+            out = get_heating(m, nboot, seasonal_years, return_components=True, domask=domask,
+                              lower_lat=lower_lat, upper_lat=upper_lat)
             if (type(out) == int):
                 missing_models.append(m)
             else:
