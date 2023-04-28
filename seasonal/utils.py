@@ -10,6 +10,7 @@ import geopandas
 from helpful_utilities import ncutils
 import geocat.viz as gv
 from scipy.ndimage.morphology import binary_dilation
+from datetime import timedelta
 
 
 smile_dir = '/gpfs/fs1/collections/cdg/data/CLIVAR_LE'
@@ -21,7 +22,7 @@ lon1x1 = np.arange(0.5, 360, 1)
 landfrac_name = 'sftlf'
 f_landfrac = sorted(glob('%s/%s/%s/%s/*.nc' % (smile_dir, 'cesm_lens', 'fx', landfrac_name)))
 da_landfrac = xr.open_dataset(f_landfrac[0])[landfrac_name]
-da_landfrac = gv.xr_add_cyclic_longitudes(da_landfrac, 'lon')
+da_landfrac = gv.util.xr_add_cyclic_longitudes(da_landfrac, 'lon')
 da_landfrac = da_landfrac.interp({'lat': lat1x1, 'lon': lon1x1})
 is_land = da_landfrac > 50
 
@@ -187,23 +188,26 @@ def seasonal_solution(m, lam):
     A2 = (1 - m)*(constants.omega**2*constants.C_ocean**2 + constants.lam_ocean**2)**(-1/2)
     cos_phi1 = lam*(constants.omega**2*constants.C_land**2 + lam**2)**(-1/2)
     sin_phi1 = constants.omega*constants.C_land*(constants.omega**2*constants.C_land**2 + lam**2)**(-1/2)
+    cos_phi2 = constants.lam_ocean*(constants.omega**2*constants.C_ocean**2 + constants.lam_ocean**2)**(-1/2)
+    sin_phi2 = constants.omega*constants.C_ocean*(constants.omega**2*constants.C_ocean**2 +
+                                                  constants.lam_ocean**2)**(-1/2)
 
     # base of triangle
-    X = A1*cos_phi1
+    X = A1*cos_phi1 + A2*cos_phi2
     # height of triangle
-    Y = A1*sin_phi1 + A2
+    Y = A1*sin_phi1 + A2*sin_phi2
 
     gain = (X**2 + Y**2)**(1/2)
     lag = 1/constants.omega*np.arctan(Y/X)
     lag /= constants.seconds_per_day  # in days
 
     da_gain_ebm = xr.DataArray(gain,
-                               dims=('lambda', 'mixing'),
-                               coords={'lambda': lam.flatten(), 'mixing': m.flatten()})
+                               dims=('lam', 'mixing'),
+                               coords={'lam': lam.flatten(), 'mixing': m.flatten()})
 
     da_lag_ebm = xr.DataArray(lag,
-                              dims=('lambda', 'mixing'),
-                              coords={'lambda': lam.flatten(), 'mixing': m.flatten()})
+                              dims=('lam', 'mixing'),
+                              coords={'lam': lam.flatten(), 'mixing': m.flatten()})
 
     return da_gain_ebm, da_lag_ebm
 
@@ -264,11 +268,10 @@ def ramp_solution(m, lam, dF=3.74, yrs_ramp=np.arange(1971, 2051), return_endmem
 
     # Use a single lambda for the ocean
     b, b_star, delta, tau_f, tau_s, phi_f, phi_s, a_f, a_s = get_soln_constants(constants.lam_ocean)
-    T_anom_ocean_linear = k/lam*(t - tau_f*a_f*(1 - np.exp(-t/tau_f)) -
-                                 tau_s*a_s*(1 - np.exp(-t/tau_s)))
+    T_anom_ocean_linear = k/constants.lam_ocean*(t - tau_f*a_f*(1 - np.exp(-t/tau_f)) -
+                                                 tau_s*a_s*(1 - np.exp(-t/tau_s)))
 
     # Use variable values of lambda for the land
-    b, b_star, delta, tau_f, tau_s, phi_f, phi_s, a_f, a_s = get_soln_constants(lam)
     tau_land = constants.C_land/lam
     T_anom_land_linear = k/lam*(t - tau_land*(1 - np.exp(-t/tau_land)))
 
@@ -277,8 +280,8 @@ def ramp_solution(m, lam, dF=3.74, yrs_ramp=np.arange(1971, 2051), return_endmem
     real_time = pd.date_range(start='%i-01' % (yrs_ramp[0]), periods=len(t), freq='M')
 
     da_T_ebm = xr.DataArray(T_anom_mix,
-                            dims=('time', 'lambda', 'mixing'),
-                            coords={'time': real_time, 'lambda': lam.flatten(), 'mixing': m.flatten()})
+                            dims=('time', 'lam', 'mixing'),
+                            coords={'time': real_time, 'lam': lam.flatten(), 'mixing': m.flatten()})
 
     if return_endmembers:
         return T_anom_ocean_linear, T_anom_land_linear
@@ -327,10 +330,9 @@ def ramp_stabilize_solution(m, lam, dF=3.74, yrs_ramp=np.arange(1971, 2051), yrs
 
     slow_term = tau_s*a_s*(1 - np.exp(-t_st/tau_s))*np.exp(-(t2 - t_st)/tau_s)
     fast_term = tau_f*a_f*(1 - np.exp(-t_st/tau_f))*np.exp(-(t2 - t_st)/tau_f)
-    T_anom_ocean_stable = k/lam*(t_st - slow_term - fast_term)
+    T_anom_ocean_stable = k/constants.lam_ocean*(t_st - slow_term - fast_term)
 
     # but use variable lambda for land
-    b, b_star, delta, tau_f, tau_s, phi_f, phi_s, a_f, a_s = get_soln_constants(lam)
     tau_land = constants.C_land/lam
     T_anom_land_stable = k/lam*(t_st - tau_land*(1 - np.exp(-t_st/tau_land))*np.exp(-(t2 - t_st)/tau_land))
 
@@ -348,8 +350,8 @@ def ramp_stabilize_solution(m, lam, dF=3.74, yrs_ramp=np.arange(1971, 2051), yrs
     real_time = pd.date_range(start='%i-01' % (yrs_ramp[0]), periods=len(t1) + len(t2), freq='M')
 
     da_T_ebm = xr.DataArray(T_anom_mix,
-                            dims=('time', 'lambda', 'mixing'),
-                            coords={'time': real_time, 'lambda': lam.flatten(), 'mixing': m.flatten()})
+                            dims=('time', 'lam', 'mixing'),
+                            coords={'time': real_time, 'lam': lam.flatten(), 'mixing': m.flatten()})
 
     return da_T_ebm
 
@@ -464,21 +466,23 @@ def calc_trend_season(da, trend_years, this_season):
     return da_beta
 
 
-def calc_load_SMILE_seasonal_cycle(models, seasonal_years, nboot, savedir, varname='tas'):
+def calc_load_SMILE_seasonal_cycle(m, seasonal_years, nboot, savedir, varname='tas', member_number=0):
     """Calculate or load pre-calculated seasonal cycle in temperature, with bootstrapping, from each SMILE.
 
     Parameters
     ----------
-    models : list
-        Names (matching paths) of each SMILE
+    m : str
+        Name (matching paths) of the SMILE
     seasonal_years : tuple
         The start and end year of the data to be used to calculate the seasonal cycle
     nboot : int
-        How many bootstrap resamples to perform
+        How many bootstrap resamples to perform. If 1, do not perform bootstrapping
     savedir : str
         Where to save the netcdfs with the seasonal cycle metrics
     varname : str
         CMOR-style variable name
+    member_number : int
+        Which member to calculate seasonal cycle using
 
     Returns
     -------
@@ -489,61 +493,55 @@ def calc_load_SMILE_seasonal_cycle(models, seasonal_years, nboot, savedir, varna
 
     # monthly temperature
     freq = 'Amon'
-    ds_seasonal = []
-    for m in models:
 
-        savename = '%s/%s_seasonal_cycle_%s_%03i-samples.nc' % (savedir, m, varname, nboot)
+    savename = '%s/%s_seasonal_cycle_%s_%03i-samples_member-%02i.nc' % (savedir, m, varname, nboot, member_number)
 
-        if os.path.isfile(savename):
-            ds_1yr_T_boot = xr.open_dataset(savename)
+    if os.path.isfile(savename):
+        ds_1yr_T_boot = xr.open_dataset(savename)
+    else:
+
+        files = sorted(glob('%s/%s/%s/%s/*historical_rcp85*nc' % (smile_dir, m, freq, varname)))
+        f = files[member_number]
+
+        if m == 'ec_earth_lens':
+            ds = xr.open_dataset(f, decode_times=False)
+            new_time = pd.date_range(start='1860-01-01', periods=len(ds.time), freq='M')
+            ds = ds.assign_coords({'time': new_time})
         else:
+            ds = xr.open_dataset(f)
 
-            files = sorted(glob('%s/%s/%s/%s/*historical_rcp85*nc' % (smile_dir, m, freq, varname)))
-            f = files[0]  # using first member of each ensemble for seasonal cycle
+        da = ds[varname].load()
+        da = gv.util.xr_add_cyclic_longitudes(da, 'lon')
+        da = da.interp({'lat': lat1x1, 'lon': lon1x1})
 
-            if m == 'ec_earth_lens':
-                ds = xr.open_dataset(f, decode_times=False)
-                new_time = pd.date_range(start='1860-01-01', periods=len(ds.time), freq='M')
-                ds = ds.assign_coords({'time': new_time})
+        da_seasonal = da.copy().sel({'time': (da['time.year'] >= seasonal_years[0]) &
+                                             (da['time.year'] <= seasonal_years[1])})
+
+        years = da_seasonal['time.year'].values
+        unique_years = np.unique(years)
+
+        # if nboot > 1, resample years to get uncertainty in seasonal cycle
+        ds_1yr_T_boot = []
+        for kk in range(nboot):
+            if kk == 0:
+                da_boot = da_seasonal.groupby('time.month').mean()
             else:
-                ds = xr.open_dataset(f)
+                boot_years = np.random.choice(unique_years, len(unique_years))
+                new_idx = [np.where(years == by)[0] for by in boot_years]
+                new_idx = np.array(new_idx).flatten()
+                da_boot = da_seasonal.isel(time=new_idx).groupby('time.month').mean()
 
-            da = ds[varname].load()
-            da = gv.xr_add_cyclic_longitudes(da, 'lon')
-            da = da.interp({'lat': lat1x1, 'lon': lon1x1})
+            ds_1yr_T, _ = calc_amp_phase(da_boot)
+            tmp = ds_1yr_T['phi'].values
+            tmp[tmp < 0] += 365
+            ds_1yr_T['phi'].values = tmp
+            ds_1yr_T_boot.append(ds_1yr_T)
 
-            da_seasonal = da.copy().sel({'time': (da['time.year'] >= seasonal_years[0]) &
-                                                 (da['time.year'] <= seasonal_years[1])})
+        ds_1yr_T_boot = xr.concat(ds_1yr_T_boot, dim='sample')
+        ds_1yr_T_boot.attrs = {'sc_years': seasonal_years}
+        ds_1yr_T_boot.to_netcdf(savename)
 
-            # da_seasonal = do_mask(da_seasonal)
-            years = da_seasonal['time.year'].values
-            unique_years = np.unique(years)
-            # resample years to get uncertainty in seasonal cycle
-            ds_1yr_T_boot = []
-            for kk in range(nboot):
-                if kk == 0:
-                    da_boot = da_seasonal.groupby('time.month').mean()
-                else:
-                    boot_years = np.random.choice(unique_years, len(unique_years))
-                    new_idx = [np.where(years == by)[0] for by in boot_years]
-                    new_idx = np.array(new_idx).flatten()
-                    da_boot = da_seasonal.isel(time=new_idx).groupby('time.month').mean()
-
-                ds_1yr_T, _ = calc_amp_phase(da_boot)
-                tmp = ds_1yr_T['phi'].values
-                tmp[tmp < 0] += 365
-                ds_1yr_T['phi'].values = tmp
-                ds_1yr_T_boot.append(ds_1yr_T)
-
-            ds_1yr_T_boot = xr.concat(ds_1yr_T_boot, dim='sample')
-            ds_1yr_T_boot.attrs = {'sc_years': seasonal_years}
-            ds_1yr_T_boot.to_netcdf(savename)
-        ds_seasonal.append(ds_1yr_T_boot)
-
-    ds_seasonal = xr.concat(ds_seasonal, dim='model', coords='minimal')
-    ds_seasonal = ds_seasonal.assign_coords({'model': list(models)})
-
-    return ds_seasonal
+    return ds_1yr_T_boot
 
 
 def calc_load_SMILE_trends(models, trend_years, this_season, savedir):
@@ -596,7 +594,7 @@ def calc_load_SMILE_trends(models, trend_years, this_season, savedir):
                     ds = xr.open_dataset(f)
 
                 da = ds[varname].load()
-                da = gv.xr_add_cyclic_longitudes(da, 'lon')
+                da = gv.util.xr_add_cyclic_longitudes(da, 'lon')
                 da = da.interp({'lat': lat1x1, 'lon': lon1x1})
                 # mask out ocean, greenland, and remove south of 30N
                 # da = do_mask(da)
@@ -616,7 +614,7 @@ def calc_load_SMILE_trends(models, trend_years, this_season, savedir):
     return da_trend
 
 
-def do_mask(da):
+def do_mask(da, lower_lat=30, upper_lat=80):
     """Mask out Greenland and ocean, and remove south of 30N and north of 80N for 1x1 data"""
 
     countries = geopandas.read_file('/glade/work/mckinnon/seasonal/geom/ne_110m_admin_0_countries/')
@@ -630,12 +628,12 @@ def do_mask(da):
     da_greenland = da_greenland.copy(data=expanded_greenland)
     this_mask = is_land & ~(da_greenland)
     da = da.where(this_mask == 1)
-    da = da.sel({'lat': slice(30, 80)})
+    da = da.sel({'lat': slice(lower_lat, upper_lat)})
 
     return da
 
 
-def get_heating(forcing, nboot, seasonal_years,
+def get_heating(forcing, nboot, seasonal_years, domask=False, lower_lat=30, upper_lat=80,
                 return_components=False, era5_sw_fname='/glade/work/mckinnon/ERA5/month/ssr/era5_ssr.nc',
                 heatdiv_fname='/glade/work/mckinnon/seasonal/data/ZonalMean-1979-2020-TEDIV-CSCALE-ERA5-LL90.nc',
                 ceres_sw_fname='/glade/work/mckinnon/CERES/CERES_EBAF-TOA_Ed4.1_Subset_CLIM01-CLIM12.nc'):
@@ -644,13 +642,20 @@ def get_heating(forcing, nboot, seasonal_years,
     Parameters
     ----------
     forcing : str
-        Type of forcing to use: 'ERA5_div', 'CERES_div', 'ERA5', 'CERES', CMIP model name
+        Type of forcing to use: 'ERA5_div', 'CERES_div', 'ERA5', 'CERES', CMIP model name-s/t
         ERA5: SW at the surface, CERES: SW at TOA
         div: to include heat flux divergence from ERA5 or not
+        s/t for CMIP: surface or TOA, e.g. canesm2_lens-t
     nboot : int
         Number of times to bootstrap resample years
     seasonal_years : tuple
          The start and end year of the data to be used to calculate the seasonal cycle.
+    domask : bool
+        Indicator of whether to mask domain to land/no Greenland using utils.do_mask
+    lower_lat : int or float
+        If masking, lower latitude to bound the masked area
+    upper_lat : int or float
+        If masking, upper latitude to bound the masked area
     return_components : bool
         Indicator of whether to also return the sw_down and div fields
     era5_sw_fname : str
@@ -676,39 +681,55 @@ def get_heating(forcing, nboot, seasonal_years,
 
         sw_net = sw_net.rename({'latitude': 'lat', 'longitude': 'lon'})
         sw_net = sw_net.sortby('lat')
-        sw_net = sw_net.mean('lon')
 
     else:  # climate model based forcing
         freq = 'Amon'
-        var1 = 'rsds'
-        var2 = 'rsus'
-        files1 = sorted(glob('%s/%s/%s/%s/*historical_rcp85*nc' % (smile_dir, forcing, freq, var1)))
-        files2 = sorted(glob('%s/%s/%s/%s/*historical_rcp85*nc' % (smile_dir, forcing, freq, var2)))
+        model_name = forcing.split('-')[0]
+        type_forcing = forcing.split('-')[1]
+        var1 = 'rsd%s' % type_forcing
+        var2 = 'rsu%s' % type_forcing
 
-        if (len(files1) == 0) | (len(files2) == 0):
+        # three models do not have correct shortwave in MMLEA
+        # need to treat as special cases
+        # five models do not have SW TOA in MMLEA
+        name_map = {'csiro_mk36_lens': 'CSIRO-Mk3-6-0', 'gfdl_cm3_lens': 'GFDL-CM3', 'mpi_lens': 'MPI-ESM-LR'}
+        rad_dir = '/glade/work/mckinnon/seasonal/new_rad'
+        if model_name == 'ec_earth_lens':  # sw forcing generally unavailable
             return 0
-
-        f1 = files1[0]
-        f2 = files2[0]
-        if forcing == 'ec_earth_lens':
-            ds1 = xr.open_dataset(f1, decode_times=False)
-            new_time = pd.date_range(start='1860-01-01', periods=len(ds1.time), freq='M')
-            ds1 = ds1.assign_coords({'time': new_time})
-            ds2 = xr.open_dataset(f2, decode_times=False)
-            new_time = pd.date_range(start='1860-01-01', periods=len(ds2.time), freq='M')
-            ds2 = ds2.assign_coords({'time': new_time})
+        elif model_name == 'cesm_lens':
+            if type_forcing == 's':
+                cesm_var = 'FSNS'
+            elif type_forcing == 't':
+                cesm_var = 'FSNT'
+            files = sorted(glob('%s/*%s*.nc' % (rad_dir, cesm_var)))
+            ds = xr.open_mfdataset(files)
+            da = ds[cesm_var].load()
+            # shift by one day because of issue with CESM saved timestamps
+            da = da.assign_coords(time=da.time-timedelta(days=1))
         else:
-            ds1 = xr.open_dataset(f1)
-            ds2 = xr.open_dataset(f2)
+            files1 = sorted(glob('%s/%s/%s/%s/*historical_rcp85_r1i1p1*nc' % (smile_dir, model_name, freq, var1)))
+            files2 = sorted(glob('%s/%s/%s/%s/*historical_rcp85_r1i1p1*nc' % (smile_dir, model_name, freq, var2)))
+            if (len(files1) == 0) | (len(files2) == 0) | (model_name == 'mpi_lens'):
+                cmip_name = name_map[model_name]
+                files1 = sorted(glob('%s/%s*%s*r1i1p1*.nc' % (rad_dir, var1, cmip_name)))
+                files2 = sorted(glob('%s/%s*%s*r1i1p1*.nc' % (rad_dir, var2, cmip_name)))
+            ds1 = xr.open_mfdataset(files1)
+            ds2 = xr.open_mfdataset(files2)
+            if (ds1.time.values != ds2.time.values).any():  # non-matching saved times
+                return 0
+            da = ds1[var1].load() - ds2[var2].load()
+        sw_net = da.rename('rsn%s' % type_forcing)
 
-        if (ds1.time.values != ds2.time.values).any():  # non-matching saved times, happens in MPI
-            return 0
-        da = ds1[var1].load() - ds2[var2].load()
-        da = da.rename('rsns')
-        sw_net = da.mean('lon')
+    sw_net = gv.util.xr_add_cyclic_longitudes(sw_net, 'lon')
+    sw_net = sw_net.interp({'lat': lat1x1, 'lon': lon1x1})
 
-    # interpolate to 1x1 and select only specified years for seasonal cycle
-    sw_net = sw_net.interp({'lat': lat1x1})
+    if domask:  # mask out ocean, Greenland
+        sw_net = do_mask(sw_net, lower_lat=lower_lat, upper_lat=upper_lat)
+
+    # average along longitude
+    sw_net = sw_net.mean('lon')
+
+    # select only specified years for seasonal cycle
     sw_net = sw_net.sel({'time': (sw_net['time.year'] >= seasonal_years[0]) &
                                  (sw_net['time.year'] <= seasonal_years[1])})
     if 'div' in forcing:
@@ -718,6 +739,7 @@ def get_heating(forcing, nboot, seasonal_years,
         da_heatdiv = xr.DataArray(ds_heatdiv['ZM_TEDIV'].values, dims=('time', 'lat'),
                                   coords={'time': sw_net['time'].values, 'lat': ds_heatdiv['lat'].values})
         da_heatdiv = da_heatdiv.sortby('lat')
+        da_heatdiv = da_heatdiv.interp({'lat': lat1x1})
         all_heating = sw_net - da_heatdiv
     else:
         all_heating = sw_net
@@ -803,7 +825,7 @@ def predict_with_ebm(da_gain, da_lag, da_gain_ebm, da_lag_ebm, da_trend_ebm):
 
     T_pred = da_trend_ebm.values.flatten()[min_loc]
 
-    mix_mat, lam_mat = np.meshgrid(da_trend_ebm['mixing'], da_trend_ebm['lambda'])
+    mix_mat, lam_mat = np.meshgrid(da_trend_ebm['mixing'], da_trend_ebm['lam'])
     lam_value = lam_mat.flatten()[min_loc]
     mixing_value = mix_mat.flatten()[min_loc]
 
@@ -825,11 +847,11 @@ def predict_with_ebm(da_gain, da_lag, da_gain_ebm, da_lag_ebm, da_trend_ebm):
     return da_T_pred, da_lam_inferred, da_mix_inferred
 
 
-def get_SMILE_forcing(models, savedir, nboot, seasonal_years):
+def get_SMILE_forcing(models, type_forcing, savedir, nboot, seasonal_years, domask=False, lower_lat=30, upper_lat=80):
     """Get SW forcing from SMILEs. Not all models have saved output; fill in with EM for other models."""
 
-    savename_amp_phase = '%s/sw_net_amp_phase_SMILEs_%i-samples.nc' % (savedir, nboot)
-    savename_sw_ts = '%s/sw_net_ts_SMILEs_%i-samples.nc' % (savedir, nboot)
+    savename_amp_phase = '%s/sw_net_%s_amp_phase_SMILEs_%i-samples.nc' % (savedir, type_forcing, nboot)
+    savename_sw_ts = '%s/sw_net_%s_ts_SMILEs_%i-samples.nc' % (savedir, type_forcing, nboot)
 
     if os.path.isfile(savename_amp_phase) & os.path.isfile(savename_sw_ts):
         ds_seasonal_F_SMILES = xr.open_dataset(savename_amp_phase)
@@ -840,7 +862,10 @@ def get_SMILE_forcing(models, savedir, nboot, seasonal_years):
         ds_seasonal_F_SMILES = []
         sw_net_ts_SMILES = []
         for m in models:
-            out = get_heating(m, nboot, seasonal_years, return_components=True)
+            print(m)
+            out = get_heating('%s-%s' % (m, type_forcing[0]), nboot, seasonal_years,
+                              return_components=True, domask=domask,
+                              lower_lat=lower_lat, upper_lat=upper_lat)
             if (type(out) == int):
                 missing_models.append(m)
             else:
