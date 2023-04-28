@@ -188,23 +188,26 @@ def seasonal_solution(m, lam):
     A2 = (1 - m)*(constants.omega**2*constants.C_ocean**2 + constants.lam_ocean**2)**(-1/2)
     cos_phi1 = lam*(constants.omega**2*constants.C_land**2 + lam**2)**(-1/2)
     sin_phi1 = constants.omega*constants.C_land*(constants.omega**2*constants.C_land**2 + lam**2)**(-1/2)
+    cos_phi2 = constants.lam_ocean*(constants.omega**2*constants.C_ocean**2 + constants.lam_ocean**2)**(-1/2)
+    sin_phi2 = constants.omega*constants.C_ocean*(constants.omega**2*constants.C_ocean**2 +
+                                                  constants.lam_ocean**2)**(-1/2)
 
     # base of triangle
-    X = A1*cos_phi1
+    X = A1*cos_phi1 + A2*cos_phi2
     # height of triangle
-    Y = A1*sin_phi1 + A2
+    Y = A1*sin_phi1 + A2*sin_phi2
 
     gain = (X**2 + Y**2)**(1/2)
     lag = 1/constants.omega*np.arctan(Y/X)
     lag /= constants.seconds_per_day  # in days
 
     da_gain_ebm = xr.DataArray(gain,
-                               dims=('lambda', 'mixing'),
-                               coords={'lambda': lam.flatten(), 'mixing': m.flatten()})
+                               dims=('lam', 'mixing'),
+                               coords={'lam': lam.flatten(), 'mixing': m.flatten()})
 
     da_lag_ebm = xr.DataArray(lag,
-                              dims=('lambda', 'mixing'),
-                              coords={'lambda': lam.flatten(), 'mixing': m.flatten()})
+                              dims=('lam', 'mixing'),
+                              coords={'lam': lam.flatten(), 'mixing': m.flatten()})
 
     return da_gain_ebm, da_lag_ebm
 
@@ -265,11 +268,10 @@ def ramp_solution(m, lam, dF=3.74, yrs_ramp=np.arange(1971, 2051), return_endmem
 
     # Use a single lambda for the ocean
     b, b_star, delta, tau_f, tau_s, phi_f, phi_s, a_f, a_s = get_soln_constants(constants.lam_ocean)
-    T_anom_ocean_linear = k/lam*(t - tau_f*a_f*(1 - np.exp(-t/tau_f)) -
-                                 tau_s*a_s*(1 - np.exp(-t/tau_s)))
+    T_anom_ocean_linear = k/constants.lam_ocean*(t - tau_f*a_f*(1 - np.exp(-t/tau_f)) -
+                                                 tau_s*a_s*(1 - np.exp(-t/tau_s)))
 
     # Use variable values of lambda for the land
-    b, b_star, delta, tau_f, tau_s, phi_f, phi_s, a_f, a_s = get_soln_constants(lam)
     tau_land = constants.C_land/lam
     T_anom_land_linear = k/lam*(t - tau_land*(1 - np.exp(-t/tau_land)))
 
@@ -278,8 +280,8 @@ def ramp_solution(m, lam, dF=3.74, yrs_ramp=np.arange(1971, 2051), return_endmem
     real_time = pd.date_range(start='%i-01' % (yrs_ramp[0]), periods=len(t), freq='M')
 
     da_T_ebm = xr.DataArray(T_anom_mix,
-                            dims=('time', 'lambda', 'mixing'),
-                            coords={'time': real_time, 'lambda': lam.flatten(), 'mixing': m.flatten()})
+                            dims=('time', 'lam', 'mixing'),
+                            coords={'time': real_time, 'lam': lam.flatten(), 'mixing': m.flatten()})
 
     if return_endmembers:
         return T_anom_ocean_linear, T_anom_land_linear
@@ -328,10 +330,9 @@ def ramp_stabilize_solution(m, lam, dF=3.74, yrs_ramp=np.arange(1971, 2051), yrs
 
     slow_term = tau_s*a_s*(1 - np.exp(-t_st/tau_s))*np.exp(-(t2 - t_st)/tau_s)
     fast_term = tau_f*a_f*(1 - np.exp(-t_st/tau_f))*np.exp(-(t2 - t_st)/tau_f)
-    T_anom_ocean_stable = k/lam*(t_st - slow_term - fast_term)
+    T_anom_ocean_stable = k/constants.lam_ocean*(t_st - slow_term - fast_term)
 
     # but use variable lambda for land
-    b, b_star, delta, tau_f, tau_s, phi_f, phi_s, a_f, a_s = get_soln_constants(lam)
     tau_land = constants.C_land/lam
     T_anom_land_stable = k/lam*(t_st - tau_land*(1 - np.exp(-t_st/tau_land))*np.exp(-(t2 - t_st)/tau_land))
 
@@ -349,8 +350,8 @@ def ramp_stabilize_solution(m, lam, dF=3.74, yrs_ramp=np.arange(1971, 2051), yrs
     real_time = pd.date_range(start='%i-01' % (yrs_ramp[0]), periods=len(t1) + len(t2), freq='M')
 
     da_T_ebm = xr.DataArray(T_anom_mix,
-                            dims=('time', 'lambda', 'mixing'),
-                            coords={'time': real_time, 'lambda': lam.flatten(), 'mixing': m.flatten()})
+                            dims=('time', 'lam', 'mixing'),
+                            coords={'time': real_time, 'lam': lam.flatten(), 'mixing': m.flatten()})
 
     return da_T_ebm
 
@@ -641,9 +642,10 @@ def get_heating(forcing, nboot, seasonal_years, domask=False, lower_lat=30, uppe
     Parameters
     ----------
     forcing : str
-        Type of forcing to use: 'ERA5_div', 'CERES_div', 'ERA5', 'CERES', CMIP model name
+        Type of forcing to use: 'ERA5_div', 'CERES_div', 'ERA5', 'CERES', CMIP model name-s/t
         ERA5: SW at the surface, CERES: SW at TOA
         div: to include heat flux divergence from ERA5 or not
+        s/t for CMIP: surface or TOA, e.g. canesm2_lens-t
     nboot : int
         Number of times to bootstrap resample years
     seasonal_years : tuple
@@ -682,38 +684,41 @@ def get_heating(forcing, nboot, seasonal_years, domask=False, lower_lat=30, uppe
 
     else:  # climate model based forcing
         freq = 'Amon'
-        var1 = 'rsds'
-        var2 = 'rsus'
+        model_name = forcing.split('-')[0]
+        type_forcing = forcing.split('-')[1]
+        var1 = 'rsd%s' % type_forcing
+        var2 = 'rsu%s' % type_forcing
 
         # three models do not have correct shortwave in MMLEA
         # need to treat as special cases
+        # five models do not have SW TOA in MMLEA
+        name_map = {'csiro_mk36_lens': 'CSIRO-Mk3-6-0', 'gfdl_cm3_lens': 'GFDL-CM3', 'mpi_lens': 'MPI-ESM-LR'}
         rad_dir = '/glade/work/mckinnon/seasonal/new_rad'
-        if forcing == 'ec_earth_lens':  # sw forcing generally unavailable
+        if model_name == 'ec_earth_lens':  # sw forcing generally unavailable
             return 0
-        elif forcing == 'cesm_lens':
-            cesm_var = 'FSNS'
+        elif model_name == 'cesm_lens':
+            if type_forcing == 's':
+                cesm_var = 'FSNS'
+            elif type_forcing == 't':
+                cesm_var = 'FSNT'
             files = sorted(glob('%s/*%s*.nc' % (rad_dir, cesm_var)))
             ds = xr.open_mfdataset(files)
             da = ds[cesm_var].load()
             # shift by one day because of issue with CESM saved timestamps
             da = da.assign_coords(time=da.time-timedelta(days=1))
         else:
-            if forcing == 'mpi_lens':
-                files1 = sorted(glob('%s/%s*.nc' % (rad_dir, var1)))
-                files2 = sorted(glob('%s/%s*.nc' % (rad_dir, var2)))
-            else:
-                files1 = sorted(glob('%s/%s/%s/%s/*historical_rcp85*nc' % (smile_dir, forcing, freq, var1)))
-                files2 = sorted(glob('%s/%s/%s/%s/*historical_rcp85*nc' % (smile_dir, forcing, freq, var2)))
-
-            f1 = files1[0]
-            f2 = files2[0]
-            ds1 = xr.open_dataset(f1)
-            ds2 = xr.open_dataset(f2)
-
+            files1 = sorted(glob('%s/%s/%s/%s/*historical_rcp85_r1i1p1*nc' % (smile_dir, model_name, freq, var1)))
+            files2 = sorted(glob('%s/%s/%s/%s/*historical_rcp85_r1i1p1*nc' % (smile_dir, model_name, freq, var2)))
+            if (len(files1) == 0) | (len(files2) == 0) | (model_name == 'mpi_lens'):
+                cmip_name = name_map[model_name]
+                files1 = sorted(glob('%s/%s*%s*r1i1p1*.nc' % (rad_dir, var1, cmip_name)))
+                files2 = sorted(glob('%s/%s*%s*r1i1p1*.nc' % (rad_dir, var2, cmip_name)))
+            ds1 = xr.open_mfdataset(files1)
+            ds2 = xr.open_mfdataset(files2)
             if (ds1.time.values != ds2.time.values).any():  # non-matching saved times
                 return 0
             da = ds1[var1].load() - ds2[var2].load()
-        sw_net = da.rename('rsns')
+        sw_net = da.rename('rsn%s' % type_forcing)
 
     sw_net = gv.util.xr_add_cyclic_longitudes(sw_net, 'lon')
     sw_net = sw_net.interp({'lat': lat1x1, 'lon': lon1x1})
@@ -820,7 +825,7 @@ def predict_with_ebm(da_gain, da_lag, da_gain_ebm, da_lag_ebm, da_trend_ebm):
 
     T_pred = da_trend_ebm.values.flatten()[min_loc]
 
-    mix_mat, lam_mat = np.meshgrid(da_trend_ebm['mixing'], da_trend_ebm['lambda'])
+    mix_mat, lam_mat = np.meshgrid(da_trend_ebm['mixing'], da_trend_ebm['lam'])
     lam_value = lam_mat.flatten()[min_loc]
     mixing_value = mix_mat.flatten()[min_loc]
 
@@ -842,11 +847,11 @@ def predict_with_ebm(da_gain, da_lag, da_gain_ebm, da_lag_ebm, da_trend_ebm):
     return da_T_pred, da_lam_inferred, da_mix_inferred
 
 
-def get_SMILE_forcing(models, savedir, nboot, seasonal_years, domask=False, lower_lat=30, upper_lat=80):
+def get_SMILE_forcing(models, type_forcing, savedir, nboot, seasonal_years, domask=False, lower_lat=30, upper_lat=80):
     """Get SW forcing from SMILEs. Not all models have saved output; fill in with EM for other models."""
 
-    savename_amp_phase = '%s/sw_net_amp_phase_SMILEs_%i-samples.nc' % (savedir, nboot)
-    savename_sw_ts = '%s/sw_net_ts_SMILEs_%i-samples.nc' % (savedir, nboot)
+    savename_amp_phase = '%s/sw_net_%s_amp_phase_SMILEs_%i-samples.nc' % (savedir, type_forcing, nboot)
+    savename_sw_ts = '%s/sw_net_%s_ts_SMILEs_%i-samples.nc' % (savedir, type_forcing, nboot)
 
     if os.path.isfile(savename_amp_phase) & os.path.isfile(savename_sw_ts):
         ds_seasonal_F_SMILES = xr.open_dataset(savename_amp_phase)
@@ -857,7 +862,9 @@ def get_SMILE_forcing(models, savedir, nboot, seasonal_years, domask=False, lowe
         ds_seasonal_F_SMILES = []
         sw_net_ts_SMILES = []
         for m in models:
-            out = get_heating(m, nboot, seasonal_years, return_components=True, domask=domask,
+            print(m)
+            out = get_heating('%s-%s' % (m, type_forcing[0]), nboot, seasonal_years,
+                              return_components=True, domask=domask,
                               lower_lat=lower_lat, upper_lat=upper_lat)
             if (type(out) == int):
                 missing_models.append(m)
