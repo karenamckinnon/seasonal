@@ -323,11 +323,11 @@ def ramp_stabilize_solution(m, lam, dF=3.74, yrs_ramp=np.arange(1971, 2051), yrs
     k = dF/(nyrs_ramp*constants.days_per_year*constants.seconds_per_day)
 
     # Use a single lambda for the ocean
-    b, b_star, delta, tau_f, tau_s, phi_f, phi_s, a_f, a_s = get_soln_constants(constants.lam_ocean)
+    b, b_star, delta, tau_f, tau_s, phi_f, phi_s, a_f, a_s = get_soln_constants(constants.lam)
 
     slow_term = tau_s*a_s*(1 - np.exp(-t_st/tau_s))*np.exp(-(t2 - t_st)/tau_s)
     fast_term = tau_f*a_f*(1 - np.exp(-t_st/tau_f))*np.exp(-(t2 - t_st)/tau_f)
-    T_anom_ocean_stable = k/constants.lam_ocean*(t_st - slow_term - fast_term)
+    T_anom_ocean_stable = k/constants.lam*(t_st - slow_term - fast_term)
 
     # but use variable lambda for land
     tau_land = constants.C_land/lam
