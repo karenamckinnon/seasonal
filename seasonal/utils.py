@@ -185,12 +185,11 @@ def seasonal_solution(m, lam):
     lam = lam[:, np.newaxis]
 
     A1 = m*(constants.omega**2*constants.C_land**2 + lam**2)**(-1/2)
-    A2 = (1 - m)*(constants.omega**2*constants.C_ocean**2 + constants.lam_ocean**2)**(-1/2)
+    A2 = (1 - m)*(constants.omega**2*constants.C_ocean**2 + lam**2)**(-1/2)
     cos_phi1 = lam*(constants.omega**2*constants.C_land**2 + lam**2)**(-1/2)
     sin_phi1 = constants.omega*constants.C_land*(constants.omega**2*constants.C_land**2 + lam**2)**(-1/2)
-    cos_phi2 = constants.lam_ocean*(constants.omega**2*constants.C_ocean**2 + constants.lam_ocean**2)**(-1/2)
-    sin_phi2 = constants.omega*constants.C_ocean*(constants.omega**2*constants.C_ocean**2 +
-                                                  constants.lam_ocean**2)**(-1/2)
+    cos_phi2 = lam*(constants.omega**2*constants.C_ocean**2 + lam**2)**(-1/2)
+    sin_phi2 = constants.omega*constants.C_ocean*(constants.omega**2*constants.C_ocean**2 + lam**2)**(-1/2)
 
     # base of triangle
     X = A1*cos_phi1 + A2*cos_phi2
@@ -234,7 +233,7 @@ def get_soln_constants(lam):
     tau_s = constants.C_ocean*constants.C_od/(2*constants.gamma*lam)*(b + delta**(1/2))
     phi_f = constants.C_ocean/(2*constants.gamma)*(b_star - delta**(1/2))
     phi_s = constants.C_ocean/(2*constants.gamma)*(b_star + delta**(1/2))
-    a_f = phi_s*tau_f/(constants.C_ocean*(phi_s - phi_f))*lam
+    a_f = phi_s*tau_f*lam/(constants.C_ocean*(phi_s - phi_f))
     a_s = -phi_f*tau_s*lam/(constants.C_ocean*(phi_s - phi_f))
 
     return b, b_star, delta, tau_f, tau_s, phi_f, phi_s, a_f, a_s
@@ -266,10 +265,8 @@ def ramp_solution(m, lam, dF=3.74, yrs_ramp=np.arange(1971, 2051), return_endmem
 
     k = dF/(nyrs*constants.days_per_year*constants.seconds_per_day)
 
-    # Use a single lambda for the ocean
-    b, b_star, delta, tau_f, tau_s, phi_f, phi_s, a_f, a_s = get_soln_constants(constants.lam_ocean)
-    T_anom_ocean_linear = k/constants.lam_ocean*(t - tau_f*a_f*(1 - np.exp(-t/tau_f)) -
-                                                 tau_s*a_s*(1 - np.exp(-t/tau_s)))
+    b, b_star, delta, tau_f, tau_s, phi_f, phi_s, a_f, a_s = get_soln_constants(lam)
+    T_anom_ocean_linear = k/lam*(t - tau_f*a_f*(1 - np.exp(-t/tau_f)) - tau_s*a_s*(1 - np.exp(-t/tau_s)))
 
     # Use variable values of lambda for the land
     tau_land = constants.C_land/lam
@@ -406,7 +403,7 @@ def calc_amp_phase(da):
         rec = np.real(np.conj(coeff[np.newaxis, ...])*basis[..., np.newaxis])
 
     da_rec = data.copy(data=rec)
-    rho = xr.corr(da_rec, data, dim='month')
+    rho = xr.corr(da_rec, data, dim='month').data
 
     if len(da.shape) == 3:
         ds_1yr = xr.Dataset(data_vars={'A': (('lat', 'lon'), amp_1yr),
