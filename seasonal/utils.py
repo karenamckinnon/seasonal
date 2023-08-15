@@ -907,3 +907,64 @@ def get_SMILE_forcing(models, type_forcing, savedir, nboot, seasonal_years, doma
         sw_net_ts_SMILES.to_netcdf(savename_sw_ts)
 
     return ds_seasonal_F_SMILES, sw_net_ts_SMILES
+
+
+def get_EBM_concave_hull(da_gain_ebm, da_lag_ebm):
+    from helpful_utilities.geomath.hulls import ConcaveHull
+
+    lams = da_gain_ebm.lam.values
+    mixing = da_gain_ebm.mixing.values
+
+    lam_vec = np.repeat(lams[:, np.newaxis], len(mixing), axis=-1).flatten()
+    mix_vec = np.repeat(mixing[np.newaxis, :], len(lams), axis=0).flatten()
+
+    edge_idx = ((lam_vec == lam_vec.min()) | (lam_vec == lam_vec.max()) |
+                (mix_vec == mix_vec.min()) | (mix_vec == mix_vec.max()))
+
+    edge_points = np.array([da_gain_ebm.values.flatten()[edge_idx],
+                            da_lag_ebm.values.flatten()[edge_idx]]).T
+
+    dat2 = edge_points[::4, :]
+    obj = ConcaveHull(dat2, 3)
+    hull = obj.calculate()
+
+    return hull
+
+
+def points_in_hull(da_gain, da_lag, hull):
+    from shapely.geometry import Point
+    from shapely.geometry.polygon import Polygon
+    hull_poly = Polygon(hull)
+
+    da_in_hull = da_gain.copy()
+
+    for ct0, m in enumerate(da_gain.model):
+        for ct1, s in enumerate(da_gain.sample):
+            x = da_gain.sel(model=m, sample=s).values
+            y = da_lag.sel(model=m, sample=s).values
+            nx, ny = x.shape
+            x = x.flatten()
+            y = y.flatten()
+            in_hull = [hull_poly.contains(Point(x[ct], y[ct])) for ct in range(len(x))]
+            in_hull = np.array(in_hull).reshape((nx, ny))
+            da_in_hull[ct0, ct1, ...] = in_hull
+
+    return da_in_hull
+
+
+def get_EBM_hull(da_gain_ebm, da_lag_ebm):
+    from scipy.spatial import ConvexHull
+    lams = da_gain_ebm.lam.values
+    mixing = da_gain_ebm.mixing.values
+
+    lam_vec = np.repeat(lams[:, np.newaxis], len(mixing), axis=-1).flatten()
+    mix_vec = np.repeat(mixing[np.newaxis, :], len(lams), axis=0).flatten()
+
+    edge_idx = ((lam_vec == lam_vec.min()) | (lam_vec == lam_vec.max()) |
+                (mix_vec == mix_vec.min()) | (mix_vec == mix_vec.max()))
+
+    points = np.array([da_gain_ebm.values.flatten()[edge_idx], da_lag_ebm.values.flatten()[edge_idx]]).T
+
+    hull_obj = ConvexHull(points)
+    hull = np.array([points[hull_obj.vertices, 0], points[hull_obj.vertices, 1]]).T
+    return hull
