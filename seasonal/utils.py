@@ -403,7 +403,7 @@ def calc_amp_phase(da):
         rec = np.real(np.conj(coeff[np.newaxis, ...])*basis[..., np.newaxis])
 
     da_rec = data.copy(data=rec)
-    rho = xr.corr(da_rec, data, dim='month')
+    rho = xr.corr(da_rec, data, dim='month').data
 
     if len(da.shape) == 3:
         ds_1yr = xr.Dataset(data_vars={'A': (('lat', 'lon'), amp_1yr),
