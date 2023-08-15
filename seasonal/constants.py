@@ -7,7 +7,6 @@ mwe = rho*cp
 C_ocean = 20*mwe
 C_od = 673*mwe
 gamma = 0.74
-lam_ocean = 1.13  # W/m2/K
 
 # inferred from standard parameters for soil / standard diffusivity model
 C_land = 0.5*mwe
