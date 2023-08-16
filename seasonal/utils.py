@@ -393,6 +393,8 @@ def calc_amp_phase(da):
         coeff = 2/nt*(np.sum(basis[..., np.newaxis, np.newaxis]*vals, axis=0))
     elif len(da.shape) == 2:  # only latitude
         coeff = 2/nt*(np.sum(basis[..., np.newaxis]*vals, axis=0))
+    elif len(da.shape) == 1:  # single time series
+        coeff = 2/nt*(np.sum(basis*vals))
 
     amp_1yr = np.abs(coeff)
     phase_1yr = (np.angle(coeff))*365/(2*np.pi)
@@ -401,6 +403,8 @@ def calc_amp_phase(da):
         rec = np.real(np.conj(coeff[np.newaxis, ...])*basis[..., np.newaxis, np.newaxis])
     elif len(da.shape) == 2:  # only latitude
         rec = np.real(np.conj(coeff[np.newaxis, ...])*basis[..., np.newaxis])
+    elif len(da.shape) == 1:
+        rec = np.real(np.conj(coeff)*basis)
 
     da_rec = data.copy(data=rec)
     rho = xr.corr(da_rec, data, dim='month').data
@@ -415,6 +419,10 @@ def calc_amp_phase(da):
                                        'phi': (('lat'), phase_1yr),
                                        'R2': (('lat'), rho**2)},
                             coords={'lat': da.lat})
+    elif len(da.shape) == 1:
+        ds_1yr = xr.Dataset(data_vars={'A': (amp_1yr),
+                                       'phi': (phase_1yr),
+                                       'R2': (rho**2)})
 
     return ds_1yr, da_rec
 
