@@ -393,6 +393,8 @@ def calc_amp_phase(da):
         coeff = 2/nt*(np.sum(basis[..., np.newaxis, np.newaxis]*vals, axis=0))
     elif len(da.shape) == 2:  # only latitude
         coeff = 2/nt*(np.sum(basis[..., np.newaxis]*vals, axis=0))
+    elif len(da.shape) == 1:  # single time series
+        coeff = 2/nt*(np.sum(basis*vals))
 
     amp_1yr = np.abs(coeff)
     phase_1yr = (np.angle(coeff))*365/(2*np.pi)
@@ -401,6 +403,8 @@ def calc_amp_phase(da):
         rec = np.real(np.conj(coeff[np.newaxis, ...])*basis[..., np.newaxis, np.newaxis])
     elif len(da.shape) == 2:  # only latitude
         rec = np.real(np.conj(coeff[np.newaxis, ...])*basis[..., np.newaxis])
+    elif len(da.shape) == 1:
+        rec = np.real(np.conj(coeff)*basis)
 
     da_rec = data.copy(data=rec)
     rho = xr.corr(da_rec, data, dim='month').data
@@ -415,6 +419,10 @@ def calc_amp_phase(da):
                                        'phi': (('lat'), phase_1yr),
                                        'R2': (('lat'), rho**2)},
                             coords={'lat': da.lat})
+    elif len(da.shape) == 1:
+        ds_1yr = xr.Dataset(data_vars={'A': (amp_1yr),
+                                       'phi': (phase_1yr),
+                                       'R2': (rho**2)})
 
     return ds_1yr, da_rec
 
@@ -630,7 +638,7 @@ def do_mask(da, lower_lat=30, upper_lat=80):
     return da
 
 
-def get_heating(forcing, nboot, seasonal_years, domask=False, lower_lat=30, upper_lat=80,
+def get_heating(forcing, nboot, seasonal_years, domask=False, lower_lat=30, upper_lat=80, lon_avg=True,
                 return_components=False, era5_sw_fname='/glade/work/mckinnon/ERA5/month/ssr/era5_ssr.nc',
                 heatdiv_fname='/glade/work/mckinnon/seasonal/data/ZonalMean-1979-2020-TEDIV-CSCALE-ERA5-LL90.nc',
                 ceres_sw_fname='/glade/work/mckinnon/CERES/CERES_EBAF-TOA_Ed4.1_Subset_CLIM01-CLIM12.nc'):
@@ -653,6 +661,8 @@ def get_heating(forcing, nboot, seasonal_years, domask=False, lower_lat=30, uppe
         If masking, lower latitude to bound the masked area
     upper_lat : int or float
         If masking, upper latitude to bound the masked area
+    lon_avg : bool
+        Average forcing along longitude?
     return_components : bool
         Indicator of whether to also return the sw_down and div fields
     era5_sw_fname : str
@@ -724,7 +734,8 @@ def get_heating(forcing, nboot, seasonal_years, domask=False, lower_lat=30, uppe
         sw_net = do_mask(sw_net, lower_lat=lower_lat, upper_lat=upper_lat)
 
     # average along longitude
-    sw_net = sw_net.mean('lon')
+    if lon_avg:
+        sw_net = sw_net.mean('lon')
 
     # select only specified years for seasonal cycle
     sw_net = sw_net.sel({'time': (sw_net['time.year'] >= seasonal_years[0]) &
@@ -844,11 +855,17 @@ def predict_with_ebm(da_gain, da_lag, da_gain_ebm, da_lag_ebm, da_trend_ebm):
     return da_T_pred, da_lam_inferred, da_mix_inferred
 
 
-def get_SMILE_forcing(models, type_forcing, savedir, nboot, seasonal_years, domask=False, lower_lat=30, upper_lat=80):
+def get_SMILE_forcing(models, type_forcing, savedir, nboot, seasonal_years, domask=False,
+                      lower_lat=30, upper_lat=80, lon_avg=True):
     """Get SW forcing from SMILEs. Not all models have saved output; fill in with EM for other models."""
 
-    savename_amp_phase = '%s/sw_net_%s_amp_phase_SMILEs_%i-samples.nc' % (savedir, type_forcing, nboot)
-    savename_sw_ts = '%s/sw_net_%s_ts_SMILEs_%i-samples.nc' % (savedir, type_forcing, nboot)
+    if lon_avg:
+        savename_amp_phase = '%s/sw_net_%s_amp_phase_SMILEs_%i-samples.nc' % (savedir, type_forcing, nboot)
+        savename_sw_ts = '%s/sw_net_%s_ts_SMILEs_%i-samples.nc' % (savedir, type_forcing, nboot)
+    else:
+        print('using local SW')
+        savename_amp_phase = '%s/sw_net_map_%s_amp_phase_SMILEs_%i-samples.nc' % (savedir, type_forcing, nboot)
+        savename_sw_ts = '%s/sw_net_map_%s_ts_SMILEs_%i-samples.nc' % (savedir, type_forcing, nboot)
 
     if os.path.isfile(savename_amp_phase) & os.path.isfile(savename_sw_ts):
         ds_seasonal_F_SMILES = xr.open_dataset(savename_amp_phase)
@@ -861,7 +878,7 @@ def get_SMILE_forcing(models, type_forcing, savedir, nboot, seasonal_years, doma
         for m in models:
             print(m)
             out = get_heating('%s-%s' % (m, type_forcing[0]), nboot, seasonal_years,
-                              return_components=True, domask=domask,
+                              return_components=True, domask=domask, lon_avg=lon_avg,
                               lower_lat=lower_lat, upper_lat=upper_lat)
             if (type(out) == int):
                 missing_models.append(m)
